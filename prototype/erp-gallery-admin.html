@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTYPE - azerp 图库维护页（throwaway）</title>
+<!--
+  PROTOTYPE — throwaway 原型，非生产代码。
+  azerp 图库维护页 3 变体，?variant=A|B|C 切换（底部悬浮条或 ←/→ 键），双击直接打开。
+  问题：ERP 端图库维护（列表 + 新增）应该长什么样？
+  A 标准列表（Jeecg 表格+抽屉表单） B 卡片墙（封面墙+右侧详情） C 录入流水线（看板+分步向导）
+  数据仅存内存，刷新即重置。
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Microsoft YaHei", sans-serif; }
+  body { background: #f0f2f5; color: #333; font-size: 14px; }
+  .topbar { height: 48px; background: #001529; color: #fff; display: flex; align-items: center; padding: 0 20px; gap: 14px; }
+  .topbar b { font-size: 15px; }
+  .topbar .u { margin-left: auto; font-size: 12px; opacity: .8; }
+  .btn { display: inline-block; border: 1px solid #1a5fb4; color: #1a5fb4; background: #fff;
+         border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+  .btn.primary { background: #1a5fb4; color: #fff; }
+  .btn.sm { padding: 2px 8px; font-size: 12px; }
+  .btn.warn { border-color:#d88014;color:#d88014; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .chip { display:inline-block; border:1px solid #ddd; border-radius:12px; padding:1px 9px; font-size:12px; margin:2px; color:#555; }
+  .chip.on { background:#1a5fb4; color:#fff; border-color:#1a5fb4; }
+  .tag { display:inline-block; background:#eef3fb; color:#3355aa; border-radius:3px; padding:1px 7px; font-size:12px; margin:1px; }
+  .st { display:inline-block; border-radius:3px; padding:1px 8px; font-size:12px; }
+  .st.draft { background:#f5f5f5; color:#888; } .st.review { background:#fff7e6; color:#d88014; }
+  .st.on { background:#e8f7ec; color:#2a8f3f; } .st.off { background:#fbeeee; color:#c33; }
+
+  /* A 表格 */
+  .toolbar { background:#fff; padding:12px 16px; display:flex; gap:10px; align-items:center; margin:16px; border-radius:6px; }
+  .toolbar input { padding:6px 10px; border:1px solid #ddd; border-radius:4px; width:220px; }
+  table { width:calc(100% - 32px); margin:0 16px; background:#fff; border-collapse:collapse; }
+  th,td { padding:9px 10px; border-bottom:1px solid #f0f0f0; text-align:left; font-size:13px; }
+  th { background:#fafafa; color:#666; font-weight:normal; }
+  .drawer-mask { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:50; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:440px; background:#fff; z-index:51; padding:20px; overflow-y:auto; }
+  .drawer h3 { margin-bottom:12px; }
+  .frow { margin-bottom:12px; } .frow label { display:block; font-size:12px; color:#666; margin-bottom:4px; }
+  .frow input[type=text],.frow input[type=number],.frow select { width:100%; padding:7px; border:1px solid #ddd; border-radius:4px; }
+  .frow .triple { display:flex; gap:8px; } .frow .triple .item { flex:1; }
+  .fake-upload { border:1px dashed #bbb; border-radius:4px; padding:14px; text-align:center; color:#999; font-size:12px; cursor:pointer; }
+  .fake-upload:hover { border-color:#1a5fb4; color:#1a5fb4; }
+
+  /* B 卡片墙 */
+  .wall { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:14px; margin:16px; }
+  .wcard { background:#fff; border-radius:6px; overflow:hidden; position:relative; }
+  .wcard .cover { background:#fafafa; text-align:center; padding:14px; }
+  .wcard .body { padding:10px 12px; }
+  .wcard h4 { font-size:14px; margin-bottom:4px; }
+  .wcard .sub { font-size:12px; color:#999; }
+  .wcard .ribbon { position:absolute; top:8px; left:8px; }
+  .detail { position:fixed; top:48px; right:0; bottom:0; width:400px; background:#fff; z-index:40; padding:20px; overflow-y:auto; box-shadow:-4px 0 14px rgba(0,0,0,.08); }
+
+  /* C 看板 */
+  .board { display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto; }
+  .col { flex:1; min-width:250px; background:#e9edf2; border-radius:6px; padding:10px; }
+  .col h4 { font-size:13px; color:#555; margin-bottom:10px; display:flex; justify-content:space-between; }
+  .kcard { background:#fff; border-radius:5px; padding:10px; margin-bottom:8px; font-size:13px; }
+  .kcard .ops { margin-top:8px; display:flex; gap:6px; }
+  .wizard-mask { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60; display:flex; align-items:center; justify-content:center; }
+  .wizard { background:#fff; border-radius:8px; width:640px; max-height:88vh; overflow-y:auto; padding:24px; }
+  .wsteps { display:flex; font-size:12px; margin-bottom:18px; }
+  .wsteps span { flex:1; text-align:center; padding:7px 0; border-bottom:2px solid #eee; color:#999; }
+  .wsteps span.on { border-color:#1a5fb4; color:#1a5fb4; font-weight:bold; }
+  .parse-box { background:#0e1a2b; color:#9fd29f; font-family:Consolas,monospace; font-size:12px; border-radius:6px; padding:14px; line-height:1.8; }
+
+  #statebar { position:fixed; bottom:0; left:0; right:0; background:#fffbe6; border-top:1px solid #ffe58f;
+    padding:5px 16px; font-size:12px; color:#8c6d1f; z-index:45; }
+  #switcher { position:fixed; bottom:40px; left:50%; transform:translateX(-50%);
+    background:#111; color:#fff; border-radius:999px; padding:8px 14px;
+    display:flex; gap:12px; align-items:center; font-size:13px; z-index:99;
+    box-shadow:0 4px 14px rgba(0,0,0,.4); user-select:none; }
+  #switcher .arrow { cursor:pointer; font-size:16px; opacity:.8; }
+  #switcher .arrow:hover { opacity:1; }
+  svg.thumb { background:#fff; }
+</style>
+</head>
+<body>
+  <div class="topbar"><b>azerp · 图库维护</b><span style="font-size:12px;opacity:.6">erp_cad_template（演示数据，内存态）</span><span class="u">admin · 云助工厂</span></div>
+  <div id="app"></div>
+  <div id="statebar"></div>
+  <div id="switcher">
+    <span class="arrow" onclick="cycle(-1)">←</span><span id="vlabel">A</span><span class="arrow" onclick="cycle(1)">→</span>
+  </div>
+
+<script>
+/* ================= 内存数据 ================= */
+let DB = [
+  {id:1, name:"三门掩门衣柜", cat:"衣柜", door:"掩门", doors:"三门", style:"现代", color:"浅木",
+   w:[1800,2400], h:[2200,2600], d:[550,650], product:"P-1023", status:"on",  dwg:"SYM-yg-0042.dwg"},
+  {id:2, name:"两门移门衣柜", cat:"衣柜", door:"移门", doors:"两门", style:"现代", color:"灰色",
+   w:[1400,2000], h:[2200,2500], d:[600,680], product:"P-1024", status:"on",  dwg:"SYM-yg-0043.dwg"},
+  {id:3, name:"四门掩门衣柜", cat:"衣柜", door:"掩门", doors:"四门", style:"轻奢", color:"深木",
+   w:[2400,3200], h:[2200,2600], d:[550,650], product:null,     status:"review", dwg:"SYM-yg-0044.dwg"},
+  {id:4, name:"开放书柜", cat:"书柜", door:"开放", doors:"无门", style:"现代", color:"白色",
+   w:[800,1200], h:[1800,2400], d:[280,350], product:"P-2011", status:"on",  dwg:"SYM-sg-0011.dwg"},
+  {id:5, name:"两门掩门鞋柜", cat:"鞋柜", door:"掩门", doors:"两门", style:"简约", color:"白色",
+   w:[800,1200], h:[900,1200], d:[320,400], product:null,     status:"draft", dwg:"SYM-xg-0007.dwg"},
+  {id:6, name:"悬空电视柜", cat:"电视柜", door:"抽屉", doors:"无门", style:"轻奢", color:"灰色",
+   w:[1600,2400], h:[400,500], d:[380,450], product:"P-3007", status:"on",  dwg:"SYM-dsg-0003.dwg"},
+];
+let nid = 100;
+const STNAME = { draft:"草稿", review:"待审核", on:"已上架", off:"已下架" };
+const state = { variant:"A", q:"", sel:null };
+const VF = { A:"A · 标准列表", B:"B · 卡片墙", C:"C · 录入流水线" };
+
+function svgFront(t, W, H) {
+  const n = {"两门":2,"三门":3,"四门":4}[t.doors] || (t.door==="抽屉"?2:1);
+  const dw = W/n; let s = `<rect x="0.75" y="0.75" width="${W-1.5}" height="${H-1.5}" fill="#fff" stroke="#555" stroke-width="1.5"/>`;
+  if (t.door==="抽屉") { for(let i=1;i<=4;i++) s+=`<line x1="1" y1="${H*i/5}" x2="${W-1}" y2="${H*i/5}" stroke="#777"/>`; }
+  else if (t.door!=="开放") { for(let i=1;i<n;i++) s+=`<line x1="${dw*i}" y1="1" x2="${dw*i}" y2="${H-1}" stroke="#777"/>`; }
+  else { s+=`<line x1="1" y1="${H/2}" x2="${W-1}" y2="${H/2}" stroke="#777"/><line x1="${W/2}" y1="1" x2="${W/2}" y2="${H-1}" stroke="#777"/>`; }
+  return `<svg class="thumb" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+}
+const tagsOf = t => [t.cat,t.door,t.doors,t.style,t.color];
+const rangeTxt = t => `${t.w[0]}–${t.w[1]} / ${t.h[0]}–${t.h[1]} / ${t.d[0]}–${t.d[1]}`;
+function stTag(s){ return `<span class="st ${s}">${STNAME[s]}</span>`; }
+function statebar(){
+  const c = k => DB.filter(x=>x.status===k).length;
+  document.getElementById("statebar").textContent =
+    `PROTOTYPE 状态：共 ${DB.length} 条（草稿${c("draft")} 待审${c("review")} 上架${c("on")} 下架${c("off")}）· 数据在内存，刷新重置 · 标签词表：柜型/门型/门数/风格/色系`;
+}
+
+/* ================= 变体 A 标准列表 ================= */
+function renderA(){
+  const list = DB.filter(t=>!state.q||t.name.includes(state.q)||tagsOf(t).join().includes(state.q));
+  document.getElementById("app").innerHTML = `
+    <div class="toolbar">
+      <input placeholder="名称/标签搜索" value="${state.q}" oninput="state.q=this.value;renderApp()">
+      <select onchange="state.q=this.value;renderApp()" style="padding:6px;border:1px solid #ddd;border-radius:4px">
+        <option value="">全部状态</option>${Object.keys(STNAME).map(k=>`<option value="">${STNAME[k]}</option>`).join("")}</select>
+      <button class="btn primary" onclick="openDrawer()">+ 新增模板</button>
+      <span style="margin-left:auto;font-size:12px;color:#999">JeecgBoot 风格：表格 + 抽屉表单</span>
+    </div>
+    <table>
+      <tr><th>预览</th><th>名称</th><th>标签</th><th>可调范围 宽/高/深</th><th>关联产品</th><th>DWG</th><th>状态</th><th>操作</th></tr>
+      ${list.map(t=>`<tr>
+        <td>${svgFront(t,44,50)}</td><td><b>${t.name}</b></td>
+        <td>${tagsOf(t).map(x=>`<span class="tag">${x}</span>`).join("")}</td>
+        <td style="font-size:12px;color:#666">${rangeTxt(t)}</td>
+        <td style="font-size:12px">${t.product||"—"}</td><td style="font-size:12px;color:#999">${t.dwg}</td>
+        <td>${stTag(t.status)}</td>
+        <td>${t.status==="draft"?`<button class="btn sm warn" onclick="t_status(${t.id},'review')">送审</button>`:""}
+            ${t.status==="review"?`<button class="btn sm primary" onclick="t_status(${t.id},'on')">上架</button>`:""}
+            ${t.status==="on"?`<button class="btn sm" onclick="t_status(${t.id},'off')">下架</button>`:""}
+            <button class="btn sm" onclick="openDrawer(${t.id})">编辑</button></td>
+      </tr>`).join("")}
+    </table>`;
+  statebar();
+}
+function t_status(id,s){ DB.find(t=>t.id===id).status=s; renderApp(); }
+function openDrawer(id){
+  const t = id ? DB.find(x=>x.id===id) : {name:"",cat:"衣柜",door:"掩门",doors:"三门",style:"现代",color:"浅木",
+    w:["",""],h:["",""],d:["",""],product:"",status:"draft"};
+  const opt = (k,v)=>[...new Set(DB.map(x=>x[k]))].concat(v&&!DB.some(x=>x[k]===v)?[v]:[]).map(o=>`<option ${o===v?"selected":""}>${o}</option>`).join("");
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="drawer-mask" onclick="this.remove()"></div>
+    <div class="drawer">
+      <h3>${id?"编辑模板":"新增模板"} <span style="font-size:12px;color:#999;font-weight:normal">erp_cad_template</span></h3>
+      <div class="frow"><label>名称 *</label><input type="text" id="f_name" value="${t.name}"></div>
+      <div class="frow"><label>标签（词表下拉，强制选择）</label>
+        <select id="f_cat">${opt("cat",t.cat)}</select>
+        <div style="height:6px"></div>
+        <div style="display:flex;gap:8px">
+          <select id="f_door" style="flex:1">${opt("door",t.door)}</select>
+          <select id="f_doors" style="flex:1">${opt("doors",t.doors)}</select></div>
+        <div style="height:6px"></div>
+        <div style="display:flex;gap:8px">
+          <select id="f_style" style="flex:1">${opt("style",t.style)}</select>
+          <select id="f_color" style="flex:1">${opt("color",t.color)}</select></div>
+      </div>
+      <div class="frow"><label>可调范围 (mm) — 宽</label><div class="triple">
+        <div class="item"><input type="number" id="f_w0" value="${t.w[0]}" placeholder="min"></div>
+        <div class="item"><input type="number" id="f_w1" value="${t.w[1]}" placeholder="max"></div></div></div>
+      <div class="frow"><label>高</label><div class="triple">
+        <div class="item"><input type="number" id="f_h0" value="${t.h[0]}"></div>
+        <div class="item"><input type="number" id="f_h1" value="${t.h[1]}"></div></div></div>
+      <div class="frow"><label>深</label><div class="triple">
+        <div class="item"><input type="number" id="f_d0" value="${t.d[0]}"></div>
+        <div class="item"><input type="number" id="f_d1" value="${t.d[1]}"></div></div></div>
+      <div class="frow"><label>文件</label>
+        <div class="fake-upload">点击上传 DWG（动态块模板）<br><span style="color:#bbb">演示：不真实上传</span></div>
+        <div style="height:8px"></div>
+        <div class="fake-upload">三视图预览图（可由改造工具自动导出）</div></div>
+      <div class="frow"><label>关联（均可空）</label>
+        <div style="display:flex;gap:8px">
+          <select id="f_prod" style="flex:1"><option value="">关联标准产品…</option><option ${t.product==="P-1023"?"selected":""}>P-1023</option><option ${t.product==="P-1024"?"selected":""}>P-1024</option><option ${t.product==="P-2011"?"selected":""}>P-2011</option><option ${t.product==="P-3007"?"selected":""}>P-3007</option></select>
+          <select style="flex:1"><option value="">关联 SketchUp…</option></select></div></div>
+      <div class="frow"><label>备注</label><input type="text" placeholder="可选"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" onclick="document.querySelector('.drawer-mask').remove();document.querySelector('.drawer').remove()">取消</button>
+        <button class="btn primary" onclick="saveDrawer(${id||0})">${id?"保存":"存为草稿"}</button></div>
+    </div>`);
+}
+function saveDrawer(id){
+  const g = i => document.getElementById(i).value;
+  const rec = { name:g("f_name"), cat:g("f_cat"), door:g("f_door"), doors:g("f_doors"), style:g("f_style"), color:g("f_color"),
+    w:[+g("f_w0"),+g("f_w1")], h:[+g("f_h0"),+g("f_h1")], d:[+g("f_d0"),+g("f_d_d1")], product:g("f_prod")||null, status:"draft" };
+  rec.d = [+g("f_d0"), +document.getElementById("f_d1").value];
+  if (id) { Object.assign(DB.find(t=>t.id===id), rec); } else { rec.id=nid++; rec.dwg="SYM-new-"+rec.id+".dwg"; DB.push(rec); }
+  document.querySelector(".drawer-mask").remove(); document.querySelector(".drawer").remove();
+  renderApp();
+}
+
+/* ================= 变体 B 卡片墙 ================= */
+function renderB(){
+  document.getElementById("app").innerHTML = `
+    <div class="toolbar"><button class="btn primary" onclick="state.sel={new:true};renderApp()">+ 新增模板</button>
+      <span style="margin-left:auto;font-size:12px;color:#999">封面墙 + 右侧详情（点击卡片）</span></div>
+    <div class="wall">${DB.map(t=>`
+      <div class="wcard" onclick="state.sel=${t.id};renderApp()" style="outline:${state.sel===t.id?"2px solid #1a5fb4":"none"}">
+        <span class="ribbon">${stTag(t.status)}</span>
+        <div class="cover">${svgFront(t,110,126)}</div>
+        <div class="body"><h4>${t.name}</h4><div class="sub">${t.cat}·${t.door}·${t.style} ${t.product?"· "+t.product:""}</div></div>
+      </div>`).join("")}
+      <div class="wcard" style="display:flex;align-items:center;justify-content:center;min-height:200px;border:1px dashed #ccc;color:#999;cursor:pointer" onclick="state.sel={new:true};renderApp()">＋ 空白新增</div>
+    </div>
+    ${state.sel && state.sel.new ? detailHtml(null) : state.sel ? detailHtml(DB.find(t=>t.id===state.sel)) : ""}`;
+  statebar();
+}
+function detailHtml(t){
+  if (!t) return `<div class="detail"><h3>新增模板</h3>
+    <p style="font-size:13px;color:#666;margin:10px 0">卡片墙场景下新增走极简表单：名称 + 封面 + 词表标签，其余（范围/文件/关联）编辑时补。</p>
+    <div class="frow"><label>名称</label><input type="text" id="b_name"></div>
+    <div class="frow"><label>柜型</label><select id="b_cat">${[...new Set(DB.map(x=>x.cat))].map(c=>`<option>${c}</option>`).join("")}</select></div>
+    <button class="btn primary" onclick="DB.push({id:nid++,name:document.getElementById('b_name').value||'未命名',cat:document.getElementById('b_cat').value,door:'掩门',doors:'三门',style:'现代',color:'浅木',w:[0,0],h:[0,0],d:[0,0],product:null,status:'draft',dwg:'SYM-new.dwg'});state.sel=null;renderApp()">创建草稿卡片</button>
+    <button class="btn" style="margin-left:6px" onclick="state.sel=null;renderApp()">关闭</button></div>`;
+  return `<div class="detail">
+    <div style="text-align:center;padding:10px;background:#fafafa;border-radius:6px">${svgFront(t,140,160)}</div>
+    <h3 style="margin:14px 0 6px">${t.name} ${stTag(t.status)}</h3>
+    <div style="margin:6px 0">${tagsOf(t).map(x=>`<span class="tag">${x}</span>`).join("")}</div>
+    <div class="frow" style="margin-top:14px"><label>可调范围 宽/高/深 (mm)</label><input type="text" value="${rangeTxt(t)}"></div>
+    <div class="frow"><label>文件：${t.dwg} ｜ 关联：${t.product||"—"} ｜ SketchUp：—</label></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      ${t.status==="draft"?`<button class="btn warn" onclick="t_status(${t.id},'review');">送审</button>`:""}
+      ${t.status==="review"?`<button class="btn primary" onclick="t_status(${t.id},'on')">上架</button>`:""}
+      ${t.status==="on"?`<button class="btn" onclick="t_status(${t.id},'off')">下架</button>`:""}
+      ${t.status==="off"?`<button class="btn primary" onclick="t_status(${t.id},'on')">重新上架</button>`:""}
+      <button class="btn" style="margin-left:auto" onclick="state.sel=null;renderApp()">关闭</button>
+    </div></div>`;
+}
+
+/* ================= 变体 C 录入流水线 ================= */
+let wStep = 1;
+function renderC(){
+  const cols = [["draft","草稿 · 录入"],["review","待审核"],["on","已上架"],["off","已下架"]];
+  document.getElementById("app").innerHTML = `
+    <div class="toolbar"><button class="btn primary" onclick="wStep=1;openWizard()">+ 向导式录入（含自动解析）</button>
+      <span style="margin-left:auto;font-size:12px;color:#999">看板按状态推进：卡片按钮 = 状态流转</span></div>
+    <div class="board">${cols.map(([k,label])=>`
+      <div class="col"><h4>${label}<span>${DB.filter(t=>t.status===k).length}</span></h4>
+        ${DB.filter(t=>t.status===k).map(t=>`
+          <div class="kcard">
+            <div style="display:flex;gap:8px;align-items:center">${svgFront(t,34,40)}
+              <div><b style="font-size:13px">${t.name}</b><div style="font-size:11px;color:#999">${t.cat}·${t.door}·${t.doors}</div></div></div>
+            <div class="ops">
+              ${k==="draft"?`<button class="btn sm warn" onclick="t_status(${t.id},'review')">送审 →</button>`:""}
+              ${k==="review"?`<button class="btn sm primary" onclick="t_status(${t.id},'on')">上架 →</button><button class="btn sm" onclick="t_status(${t.id},'draft')">退回</button>`:""}
+              ${k==="on"?`<button class="btn sm" onclick="t_status(${t.id},'off')">下架</button>`:""}
+              ${k==="off"?`<button class="btn sm" onclick="t_status(${t.id},'review')">重新送审</button>`:""}
+            </div></div>`).join("")}
+      </div>`).join("")}
+    </div>`;
+  statebar();
+}
+function openWizard(){
+  const steps = ["上传 DWG","自动解析","打标签","参数范围","预览提交"];
+  let bodyC = "";
+  if (wStep===1) bodyC = `<div class="fake-upload" style="padding:50px">拖入 .dwg 文件（改造工具产出的动态块模板）<br><br><button class="btn primary" onclick="wStep=2;openWizard()">演示：选择 SYM-yg-0045.dwg</button></div>`;
+  if (wStep===2) bodyC = `<div class="parse-box">读取 ${"SYM-yg-0045.dwg"} …
+  ✔ 块定义：YGBS-YG3（动态块，含 2 个拉伸参数）
+  ✔ 识别标注尺寸：2000 / 2300 / 600 (mm)
+  → 建议可调范围 ±20%：宽 1600–2400 高 1840–2760 深 480–720
+  ✔ 文件名解析 → 预打标签：衣柜 · 掩门 · 三门
+  ⚠ 图层“0”上存在散线 14 条 → 建议运行【改造工具·图层清理】
+  <span style="color:#ffe58f">人工终审项：拉伸参数与动作、板件归属</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="btn primary" onclick="wStep=3;openWizard()">采用解析结果，下一步</button></div>`;
+  if (wStep===3) bodyC = `<div style="font-size:13px">
+    <p style="color:#999;margin-bottom:8px">预打标签已填（可改，词表强制下拉）</p>
+    <div class="frow"><label>柜型</label><select><option selected>衣柜</option><option>书柜</option><option>鞋柜</option></select></div>
+    <div style="display:flex;gap:8px"><div class="frow" style="flex:1"><label>门型</label><select><option selected>掩门</option><option>移门</option><option>开放</option></select></div>
+    <div class="frow" style="flex:1"><label>门数</label><select><option selected>三门</option><option>两门</option><option>四门</option></select></div></div>
+    <div style="display:flex;gap:8px"><div class="frow" style="flex:1"><label>风格</label><select><option selected>现代</option><option>轻奢</option><option>新中式</option></select></div>
+    <div class="frow" style="flex:1"><label>色系</label><select><option>浅木</option><option selected>深木</option><option>白色</option></select></div></div>
+    <div style="text-align:right"><button class="btn primary" onclick="wStep=4;openWizard()">下一步</button></div></div>`;
+  if (wStep===4) bodyC = `<div style="font-size:13px">
+    <p style="color:#999;margin-bottom:10px">采用解析建议值（高亮处需人工确认板件规格依据）</p>
+    ${[["宽","1600","2400"],["高","1840","2760"],["深","480","720"]].map(([l,a,b])=>`
+      <div class="frow"><label>${l} min–max (mm)</label><div class="triple">
+        <div class="item"><input type="number" value="${a}" style="border-color:#d88014"></div>
+        <div class="item"><input type="number" value="${b}" style="border-color:#d88014"></div></div></div>`).join("")}
+    <div class="frow"><label>关联标准产品（可空）</label><select><option value="">不关联</option><option>P-1025</option></select></div>
+    <div style="text-align:right"><button class="btn primary" onclick="wStep=5;openWizard()">下一步</button></div></div>`;
+  if (wStep===5) bodyC = `<div style="text-align:center">
+    ${svgFront({doors:"三门",door:"掩门"},170,195)}
+    <p style="margin:12px 0;font-size:13px">三门掩门衣柜 · 现代深木 · 1600–2400/1840–2760/480–720<br><span style="color:#999">提交后进入「待审核」，CAD 人员终审动态块参数后上架</span></p>
+    <button class="btn primary" style="padding:8px 26px" onclick="DB.push({id:nid++,name:'三门掩门衣柜V2',cat:'衣柜',door:'掩门',doors:'三门',style:'现代',color:'深木',w:[1600,2400],h:[1840,2760],d:[480,720],product:null,status:'review',dwg:'SYM-yg-0045.dwg'});closeWizard();">提交审核</button>
+    <button class="btn" style="margin-left:8px" onclick="closeWizard()">取消</button></div>`;
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="wizard-mask" id="wzMask"><div class="wizard">
+      <h3 style="margin-bottom:14px">向导式录入 · 让运营/文员也能录模板</h3>
+      <div class="wsteps">${steps.map((s,i)=>`<span class="${wStep===i+1?"on":""}">${i+1}. ${s}</span>`).join("")}</div>
+      ${bodyC}
+    </div></div>`);
+}
+function closeWizard(){ document.getElementById("wzMask").remove(); wStep=1; renderApp(); }
+
+/* ================= 切换 ================= */
+function renderApp(){ ({A:renderA,B:renderB,C:renderC})[state.variant](); }
+function setVariant(v){
+  state.variant=v; state.sel=null;
+  document.getElementById("vlabel").textContent=VF[v];
+  try{ history.replaceState(null,"",location.pathname+"?variant="+v); }catch(_){}
+  renderApp();
+}
+function cycle(d){ const ks=Object.keys(VF),i=ks.indexOf(state.variant); setVariant(ks[(i+d+ks.length)%ks.length]); }
+window.addEventListener("keydown",e=>{
+  if(["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+  if(e.key==="ArrowLeft") cycle(-1); if(e.key==="ArrowRight") cycle(1);
+});
+const q0=new URLSearchParams(location.search).get("variant");
+setVariant(VF[q0]?q0:"A");
+</script>
+</body>
+</html>

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTYPE - 插件图库面板（throwaway）</title>
+<!--
+  PROTOTYPE — throwaway 原型，非生产代码。
+  插件图库面板 3 变体，?variant=A|B|C 切换（底部悬浮条或 ←/→ 键），双击直接打开。
+  问题：AutoCAD 侧边图库面板应该长什么样？
+  A 商城式（信息流+标签筛选） B 向导式（分步选择+滑杆调参） C 紧凑专业式（目录树+键盘流）
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Microsoft YaHei", sans-serif; }
+  body { overflow: hidden; background: #1e1e1e; color: #333; }
+
+  /* ===== 假 AutoCAD 画布 ===== */
+  #canvas {
+    position: fixed; inset: 0; right: 420px; background: #2b2b2b;
+    background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  #canvas.placing { cursor: crosshair; }
+  #canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .canvas-hint {
+    position: absolute; top: 14px; left: 14px; color: #9fd29f; font-size: 13px;
+    background: rgba(0,0,0,.4); padding: 6px 10px; border-radius: 4px;
+  }
+  .placed-label { fill: #9fd29f; font-size: 11px; }
+
+  /* ===== 侧边面板 ===== */
+  #palette {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 420px;
+    background: #fff; border-left: 1px solid #444; display: flex; flex-direction: column;
+  }
+  .p-head { padding: 12px 14px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+  .p-head .logo { font-weight: bold; color: #1a5fb4; }
+  .p-head .logo small { color: #999; font-weight: normal; margin-left: 6px; }
+  .p-body { flex: 1; overflow-y: auto; }
+  .p-foot { border-top: 1px solid #eee; padding: 8px 14px; font-size: 12px; color: #666; background: #fafafa; }
+
+  /* 通用 */
+  .btn { display: inline-block; border: 1px solid #1a5fb4; color: #1a5fb4; background: #fff;
+         border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+  .btn.primary { background: #1a5fb4; color: #fff; }
+  .btn.sm { padding: 2px 8px; font-size: 12px; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .chip { display: inline-block; border: 1px solid #ddd; border-radius: 12px; padding: 2px 10px;
+          font-size: 12px; margin: 2px; cursor: pointer; color: #555; }
+  .chip.on { background: #1a5fb4; color: #fff; border-color: #1a5fb4; }
+  .search { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+  .card { border: 1px solid #eee; border-radius: 6px; padding: 10px; margin: 10px; display: flex; gap: 10px; }
+  .card .thumb { flex-shrink: 0; }
+  .card .meta { flex: 1; min-width: 0; }
+  .card h4 { font-size: 14px; margin-bottom: 4px; }
+  .card .range { font-size: 12px; color: #888; margin: 4px 0; }
+  .err { color: #d00; font-size: 12px; }
+  .ok { color: #2a2; font-size: 12px; }
+
+  /* 变体 B 向导 */
+  .steps { display: flex; font-size: 12px; margin: 10px; }
+  .steps span { flex: 1; text-align: center; padding: 6px 0; border-bottom: 2px solid #eee; color: #999; }
+  .steps span.on { border-color: #1a5fb4; color: #1a5fb4; font-weight: bold; }
+  .biggrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+  .bigopt { border: 1px solid #ddd; border-radius: 6px; padding: 18px 8px; text-align: center; cursor: pointer; font-size: 14px; }
+  .bigopt:hover { border-color: #1a5fb4; color: #1a5fb4; }
+  .slider-row { margin: 12px 10px; font-size: 13px; }
+  .slider-row input[type=range] { width: 100%; }
+  .preview-box { margin: 10px; border: 1px dashed #bbb; border-radius: 6px; padding: 10px; text-align: center; background: #fafafa; }
+
+  /* 变体 C 紧凑 */
+  .tree { font-size: 13px; }
+  .tree .node { padding: 6px 14px; cursor: pointer; display: flex; justify-content: space-between; }
+  .tree .node.on { background: #e8f1fb; color: #1a5fb4; border-right: 2px solid #1a5fb4; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #f2f2f2; font-size: 13px; cursor: pointer; }
+  .row.sel { background: #e8f1fb; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .name { font-size: 13px; }
+  .row .sub { font-size: 11px; color: #999; }
+  .badge { font-size: 11px; border-radius: 3px; padding: 1px 6px; }
+  .badge.offline { background: #eee; color: #666; }
+  .recent { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+
+  /* 登录 */
+  .login { padding: 30px 24px; }
+  .login h3 { margin-bottom: 16px; color: #1a5fb4; }
+  .login label { font-size: 12px; color: #666; display: block; margin: 10px 0 4px; }
+  .login input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+
+  /* 弹窗 */
+  .mask { position: absolute; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+  .dialog { background: #fff; border-radius: 8px; padding: 18px; width: 90%; }
+  .dialog h4 { margin-bottom: 10px; }
+  .dim { display: flex; gap: 8px; margin-top: 8px; }
+  .dim .item { flex: 1; }
+  .dim label { font-size: 12px; color: #666; }
+  .dim input, .dim select { width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+
+  /* 悬浮切换条（原型专用，不属于设计） */
+  #switcher { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: #111; color: #fff; border-radius: 999px; padding: 8px 14px;
+    display: flex; gap: 12px; align-items: center; font-size: 13px; z-index: 99;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4); user-select: none; }
+  #switcher .arrow { cursor: pointer; font-size: 16px; opacity: .8; }
+  #switcher .arrow:hover { opacity: 1; }
+
+  #toast { position: fixed; bottom: 60px; left: 14px; background: #1a5fb4; color: #fff;
+    padding: 8px 14px; border-radius: 4px; font-size: 13px; display: none; z-index: 98; }
+</style>
+</head>
+<body>
+  <div id="canvas"><svg id="cvsvg"></svg><div class="canvas-hint" id="cvHint">假 AutoCAD 画布（演示用）。左侧灰色区域模拟图纸。</div></div>
+  <div id="palette"></div>
+  <div id="switcher">
+    <span class="arrow" onclick="cycle(-1)">←</span>
+    <span id="vlabel">A</span>
+    <span class="arrow" onclick="cycle(1)">→</span>
+  </div>
+  <div id="toast"></div>
+
+<script>
+/* ================= 假数据（词表：柜型/门型/门数/风格/色系） ================= */
+const T = [
+  {id:1, name:"三门掩门衣柜", cat:"衣柜", door:"掩门", doors:"三门", style:"现代", color:"浅木",
+   w:[1800,2400], h:[2200,2600], d:[550,650], product:"P-1023"},
+  {id:2, name:"两门移门衣柜", cat:"衣柜", door:"移门", doors:"两门", style:"现代", color:"灰色",
+   w:[1400,2000], h:[2200,2500], d:[600,680], product:"P-1024"},
+  {id:3, name:"四门掩门衣柜", cat:"衣柜", door:"掩门", doors:"四门", style:"轻奢", color:"深木",
+   w:[2400,3200], h:[2200,2600], d:[550,650], product:null},
+  {id:4, name:"开放书柜", cat:"书柜", door:"开放", doors:"无门", style:"现代", color:"白色",
+   w:[800,1200], h:[1800,2400], d:[280,350], product:"P-2011"},
+  {id:5, name:"两门掩门鞋柜", cat:"鞋柜", door:"掩门", doors:"两门", style:"简约", color:"白色",
+   w:[800,1200], h:[900,1200], d:[320,400], product:null},
+  {id:6, name:"悬空电视柜", cat:"电视柜", door:"抽屉", doors:"无门", style:"轻奢", color:"灰色",
+   w:[1600,2400], h:[400,500], d:[380,450], product:"P-3007"},
+  {id:7, name:"五斗柜", cat:"斗柜", door:"抽屉", doors:"五抽", style:"简约", color:"浅木",
+   w:[800,1000], h:[800,1100], d:[400,460], product:null},
+  {id:8, name:"阳台洗衣柜", cat:"阳台柜", door:"掩门", doors:"两门", style:"简约", color:"灰色",
+   w:[1200,1600], h:[2200,2400], d:[550,600], product:null},
+];
+const state = { user:null, variant:"A", mode:"browse", cur:null, cache:8, docCustomer:null, lastInfo:null, ledger:[] };
+/* 下拉选项：正式版来自 azerp 主数据接口（erp_cad_hardware 等），演示为本地 Mock */
+const OPT = {
+  doorType:["平板门","造型门","格栅门","玻璃门"],
+  color:["米白","原木浅木","胡桃深棕","灰哑光"],
+  jc:["E0颗粒板 18mm","多层实木 18mm","中纤板 5mm(背板)"],
+  hinge:["海蒂诗-全盖","海蒂诗-半盖","DTC-全盖","DTC-半盖","汇泰龙-液压缓冲"],
+  handle:["AL-012 长条铝","KL-303 陶瓷圆点","免拉手(反弹器)","G-022 拉丝银"]
+};
+function selHtml(key,label){
+  const cur = (state.lastInfo && state.lastInfo[key]) || OPT[key][0];
+  return `<div class="item"><label>${label}</label><select id="i_${key}">${OPT[key].map(o=>`<option ${o===cur?"selected":""}>${o}</option>`).join("")}</select></div>`;
+}
+function collectInfo(t){
+  const g = k => { const el=document.getElementById("i_"+k); return el?el.value:null; };
+  const pEl = document.getElementById("i_product");
+  const cEl = document.getElementById("i_cust");
+  if (cEl && cEl.value.trim()) state.docCustomer = cEl.value.trim();
+  state.lastInfo = { product: pEl?pEl.value:t.name, doorType:g("doorType"), color:g("color"), jc:g("jc"), hinge:g("hinge"), handle:g("handle") };
+  return state.lastInfo;
+}
+const VF = { A:"A · 商城式", B:"B · 向导式", C:"C · 紧凑专业式" };
+
+/* ================= 三视图 SVG 生成（front/top/side） ================= */
+function svgFront(t, W, H, units) { // W,H px
+  const n = {"两门":2,"三门":3,"四门":4}[t.doors] || (t.door==="抽屉" ? 2 : 1);
+  const drawers = t.door === "抽屉";
+  const dw = W/n;
+  let s = `<rect x="0" y="0" width="${W}" height="${H}" fill="none" stroke="#555" stroke-width="1.5"/>`;
+  if (drawers) { for (let i=1;i<=4;i++) s += `<line x1="0" y1="${H*i/5}" x2="${W}" y2="${H*i/5}" stroke="#555"/>`; }
+  else { for (let i=1;i<n;i++) s += `<line x1="${dw*i}" y1="0" x2="${dw*i}" y2="${H}" stroke="#555"/>`;
+         for (let i=0;i<n;i++) s += `<line x1="${dw*i+dw*0.82}" y1="${H*0.48}" x2="${dw*i+dw*0.82}" y2="${H*0.52}" stroke="#888" stroke-width="2"/>`; }
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+}
+function rangeTxt(t){ return `宽${t.w[0]}–${t.w[1]} 高${t.h[0]}–${t.h[1]} 深${t.d[0]}–${t.d[1]}`; }
+function tagsOf(t){ return [t.cat,t.door,t.doors,t.style,t.color]; }
+function toast(msg){ const el=document.getElementById("toast"); el.textContent=msg; el.style.display="block"; setTimeout(()=>el.style.display="none",2200); foot(); }
+
+/* ================= 登录 / 状态条 ================= */
+function renderLogin(){
+  document.getElementById("palette").innerHTML = `
+    <div class="p-head"><span class="logo">柜库<small>cad-design-toolkit</small></span></div>
+    <div class="login">
+      <h3>用 ERP 账号登录</h3>
+      <p style="font-size:12px;color:#999;margin-bottom:8px">与下单账号相同（azerp /sys/login，演示版任意输入可进）</p>
+      <label>账号</label><input id="lgU" placeholder="门店设计师账号">
+      <label>密码</label><input id="lgP" type="password" placeholder="••••••">
+      <div style="margin-top:16px"><button class="btn primary" style="width:100%;padding:10px" onclick="doLogin()">登 录</button></div>
+    </div>
+    <div class="p-foot">状态：未登录</div>`;
+}
+function doLogin(){
+  state.user = { name:(document.getElementById("lgU").value||"设计师小王"), store:"示例门店A" };
+  toast("登录成功：示例门店A（JWT 已缓存）"); render();
+}
+function logout(){ state.user=null; renderLogin(); }
+function foot(){
+  const f = document.querySelector(".p-foot"); if(!f) return;
+  const modeTxt = state.mode==="placing" ? `放置中：点击左侧图纸放置「${state.cur?T.find(x=>x.id===state.cur).name:""}」` : "浏览中";
+  const todo = state.ledger.filter(e=>!e.info).length;
+  f.textContent = `状态：${state.user?("已登录 "+state.user.store):"未登录"} | 本地缓存 ${state.cache} 个模板 | 台账 ${state.ledger.length} 条${todo?`（⚠待补 ${todo}）`:""} | ${modeTxt}`;
+}
+
+/* ================= 变体 A 商城式 ================= */
+let aFilter = { cat:"", door:"", doors:"", style:"", color:"" };
+function renderA(){
+  const chips = k => [...new Set(T.map(t=>t[k]))].map(v=>`<span class="chip ${aFilter[k]===v?"on":""}" onclick="aFilter['${k}']='${aFilter[k]===v?"":v}';renderP()">${v}</span>`).join("");
+  const list = T.filter(t=>Object.keys(aFilter).every(k=>!aFilter[k]||t[k]===aFilter[k]));
+  document.getElementById("palette").innerHTML = `
+    <div class="p-head"><span class="logo">柜库<small>${state.user.store}</small></span><span><a href="javascript:openLedger()" style="font-size:12px;color:#1a5fb4">台账(${state.ledger.length})</a> <a href="javascript:logout()" style="font-size:12px;color:#999;margin-left:8px">注销</a></span></div>
+    <div class="p-body">
+      <div style="padding:10px 10px 0"><input class="search" placeholder="搜索：名称 / 标签，如 三门 掩门" oninput="aSearch(this.value)"></div>
+      <div style="padding:6px 10px">
+        <div style="font-size:11px;color:#999;margin-top:4px">柜型</div>${chips("cat")}
+        <div style="font-size:11px;color:#999;margin-top:4px">门型</div>${chips("door")}
+        <div style="font-size:11px;color:#999;margin-top:4px">风格</div>${chips("style")}
+      </div>
+      <div id="aList"></div>
+    </div>
+    <div class="p-foot"></div>`;
+  aSearch("");
+  foot();
+}
+let aQ="";
+function aSearch(q){ aQ=q;
+  const list = T.filter(t=>Object.keys(aFilter).every(k=>!aFilter[k]||t[k]===aFilter[k]))
+                .filter(t=>!q||t.name.includes(q)||tagsOf(t).join().includes(q));
+  document.getElementById("aList").innerHTML = list.length ? list.map(t=>`
+    <div class="card">
+      <div class="thumb">${svgFront(t,64,72)}</div>
+      <div class="meta">
+        <h4>${t.name}</h4>
+        <div>${tagsOf(t).map(x=>`<span class="chip" style="cursor:default">${x}</span>`).join("")}</div>
+        <div class="range">${rangeTxt(t)} mm${t.product?` · <span style="color:#2a7">${t.product}</span>`:""}</div>
+        <button class="btn primary sm" onclick="openSizeDlg(${t.id})">插 入</button>
+      </div>
+    </div>`).join("") : `<div style="padding:30px;text-align:center;color:#999;font-size:13px">没有匹配模板（已上报运营：搜索无结果）</div>`;
+}
+function openSizeDlg(id){
+  const t = T.find(x=>x.id===id); state.cur=id;
+  const mid = r => Math.round((r[0]+r[1])/2);
+  const body = document.querySelector("#palette .p-body");
+  body.insertAdjacentHTML("beforeend", `
+    <div class="mask" id="dlgMask"><div class="dialog" style="max-height:92%;overflow-y:auto">
+      <h4>${t.name} · 尺寸与产品信息</h4>
+      <div style="font-size:11px;color:#999;margin:4px 0">尺寸 (mm) — 实时校验可调范围</div>
+      <div class="dim">
+        <div class="item"><label>宽 (${t.w[0]}–${t.w[1]})</label><input id="dW" type="number" value="${mid(t.w)}"></div>
+        <div class="item"><label>高 (${t.h[0]}–${t.h[1]})</label><input id="dH" type="number" value="${mid(t.h)}"></div>
+        <div class="item"><label>深 (${t.d[0]}–${t.d[1]})</label><input id="dD" type="number" value="${mid(t.d)}"></div>
+      </div>
+      <div id="dErr" style="min-height:18px;margin-top:6px"></div>
+      <div style="font-size:11px;color:#999;margin:10px 0 4px">产品信息 — 默认继承上次，自动记入<b>图纸台账</b>（拆单基础信息）</div>
+      <div class="dim">
+        <div class="item"><label>产品名称（模板带出，可改）</label><input id="i_product" value="${t.name}"></div>
+        ${selHtml("doorType","门型")}${selHtml("color","颜色")}
+      </div>
+      <div class="dim">${selHtml("jc","基材")}${selHtml("hinge","门铰（品牌-型号）")}${selHtml("handle","拉手型号")}</div>
+      <div style="font-size:11px;color:#999;margin:10px 0 4px">图纸信息 — 本图只问一次，之后自动继承</div>
+      ${state.docCustomer
+        ? `<div style="font-size:13px;color:#666">客户：<b>${state.docCustomer}</b>（本图已记录，不再重复输入）</div>`
+        : `<div class="dim"><div class="item"><label>客户名称 *</label><input id="i_cust" placeholder="如：李女士-锦绣花园" list="custList"><datalist id="custList"><option>李女士-锦绣花园</option><option>王先生-翡翠湾</option></datalist></div></div>`}
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn" onclick="document.getElementById('dlgMask').remove()">取消</button>
+        <button class="btn primary" id="dOk" onclick="confirmInsert(${t.id})">确认，去放置</button>
+      </div>
+    </div></div>`);
+  ["dW","dH","dD"].forEach(i=>document.getElementById(i).addEventListener("input",()=>validateDlg(t)));
+  validateDlg(t);
+}
+function validateDlg(t){
+  const v = id => +document.getElementById(id).value;
+  const chk = (val,r,label)=> val<r[0]||val>r[1] ? `<span class="err">× ${label}超出可调范围 ${r[0]}–${r[1]}（板件上限）</span><br>` : "";
+  const msg = chk(v("dW"),t.w,"宽")+chk(v("dH"),t.h,"高")+chk(v("dD"),t.d,"深");
+  document.getElementById("dErr").innerHTML = msg || `<span class="ok">✓ 尺寸在可生产范围内</span>`;
+  document.getElementById("dOk").disabled = !!msg;
+}
+function confirmInsert(id){
+  const info = collectInfo(T.find(x=>x.id===id));
+  state.ins = { id, w:+document.getElementById("dW").value, h:+document.getElementById("dH").value, d:+document.getElementById("dD").value, info };
+  document.getElementById("dlgMask").remove();
+  state.mode="placing";
+  document.getElementById("canvas").classList.add("placing");
+  document.getElementById("cvHint").textContent = "放置模式：在图纸上点击任意位置放置（模拟选基点）";
+  toast("尺寸+产品信息已确认，点击图纸放置（将自动记入台账）");
+}
+function openLedger(){
+  const rows = state.ledger.map(e=>`<tr>
+    <td>${e.name}</td><td>${e.w}×${e.h}×${e.d}</td>
+    <td>${e.info?e.info.doorType:"<span style='color:#d00'>⚠待补</span>"}</td>
+    <td>${e.info?e.info.color+"/"+e.info.jc:"—"}</td>
+    <td>${e.info?e.info.hinge:"—"}</td>
+    <td>${e.info?e.info.handle:"—"}</td>
+    <td>${e.customer||"—"}</td></tr>`).join("");
+  document.querySelector("#palette .p-body").insertAdjacentHTML("beforeend", `
+    <div class="mask" id="ldMask" onclick="this.remove()"><div class="dialog" style="width:98%" onclick="event.stopPropagation()">
+      <h4>图纸台账（随 DWG 保存 · 拆单人员的基础信息）</h4>
+      ${state.ledger.length?`<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr style="color:#999;text-align:left"><th>产品</th><th>尺寸mm</th><th>门型</th><th>颜色/基材</th><th>门铰</th><th>拉手</th><th>客户</th></tr>${rows}</table>
+        <p style="font-size:12px;color:#888;margin-top:10px">三期"一键拆单"= 本台账 × BOM 配方 → 板件/五金清单 → azerp 开料链路</p>`
+      : `<p style="font-size:13px;color:#999;padding:20px;text-align:center">还没有插入记录。去插一个模板试试（⚠待补 = 快速插入未填信息，交图前补齐）。</p>`}
+      <div style="text-align:right;margin-top:10px"><button class="btn" onclick="document.getElementById('ldMask').remove()">关闭</button></div>
+    </div></div>`);
+}
+
+/* ================= 变体 B 向导式 ================= */
+let bStep = 1, bSel = { cat:null, door:null, style:null, tpl:null };
+function renderB(){
+  const steps = ["柜型","门型/风格","选模板","调尺寸"];
+  const head = `<div class="p-head"><span class="logo">柜库·向导<small>${state.user.store}</small></span><a href="javascript:logout()" style="font-size:12px;color:#999">注销</a></div>
+    <div class="steps">${steps.map((s,i)=>`<span class="${bStep===i+1?"on":""}">${i+1}. ${s}</span>`).join("")}</div>`;
+  let bodyC = "";
+  if (bStep===1) bodyC = `<div class="biggrid">${[...new Set(T.map(t=>t.cat))].map(c=>`<div class="bigopt" onclick="bSel.cat='${c}';bStep=2;renderP()">${c}</div>`).join("")}</div>`;
+  if (bStep===2) bodyC = `<div style="padding:10px"><div style="font-size:12px;color:#999">门型</div>
+      ${[...new Set(T.filter(t=>t.cat===bSel.cat).map(t=>t.door))].map(d=>`<span class="chip ${bSel.door===d?"on":""}" onclick="bSel.door='${d}';renderP()">${d}</span>`).join("")}
+      <div style="font-size:12px;color:#999;margin-top:6px">风格</div>
+      ${[...new Set(T.filter(t=>t.cat===bSel.cat).map(t=>t.style))].map(d=>`<span class="chip ${bSel.style===d?"on":""}" onclick="bSel.style='${d}';renderP()">${d}</span>`).join("")}
+      <div style="margin-top:14px"><button class="btn primary" onclick="bStep=3;renderP()" ${bSel.door&&bSel.style?"":"disabled"}>下一步</button></div></div>`;
+  if (bStep===3){
+    const list = T.filter(t=>t.cat===bSel.cat&&t.door===bSel.door&&t.style===bSel.style);
+    bodyC = list.map(t=>`<div class="card" style="border-color:${bSel.tpl===t.id?"#1a5fb4":"#eee"}">
+        <div class="thumb">${svgFront(t,64,72)}</div>
+        <div class="meta"><h4>${t.name}</h4><div class="range">${rangeTxt(t)}</div>
+        <button class="btn primary sm" onclick="bSel.tpl=${t.id};bStep=4;renderP()">选这个</button></div></div>`).join("")
+      || `<div style="padding:20px;color:#999;font-size:13px;text-align:center">该组合暂无模板 <a href="javascript:bStep=2;renderP()" style="color:#1a5fb4">换一组</a></div>`;
+  }
+  if (bStep===4){
+    const t = T.find(x=>x.id===bSel.tpl);
+    const sl = (k,label) => `<div class="slider-row"><label>${label}：<b id="v_${k}"></b> mm（${t[k][0]}–${t[k][1]}）</label>
+      <input type="range" min="${t[k][0]}" max="${t[k][1]}" value="${Math.round((t[k][0]+t[k][1])/2)}" step="10" oninput="bSlide()"></div>`;
+    bodyC = `<div class="preview-box" id="bPrev"></div>${sl("w","宽")}${sl("h","高")}${sl("d","深")}
+      <div style="padding:0 10px;font-size:11px;color:#999">产品信息 — 默认继承上次，记入图纸台账</div>
+      <div class="dim" style="padding:0 10px">${selHtml("doorType","门型")}${selHtml("color","颜色")}${selHtml("jc","基材")}</div>
+      <div class="dim" style="padding:0 10px">${selHtml("hinge","门铰")}${selHtml("handle","拉手")}</div>
+      ${state.docCustomer?`<div style="padding:0 10px;font-size:12px;color:#666">客户：<b>${state.docCustomer}</b>（本图已记录）</div>`
+        :`<div class="dim" style="padding:0 10px"><div class="item"><label>客户名称 *</label><input id="i_cust" placeholder="如：李女士-锦绣花园"></div></div>`}
+      <div style="padding:10px"><span class="ok">✓ 实时校验：滑杆天然不会超范围</span><br><br>
+      <button class="btn primary" style="padding:10px 30px" onclick="bInsert()">完成，去放置</button>
+      <a href="javascript:bStep=3;renderP()" style="font-size:12px;margin-left:10px;color:#999">重选</a></div>`;
+  }
+  document.getElementById("palette").innerHTML = head + `<div class="p-body">${bodyC}</div><div class="p-foot"></div>`;
+  if (bStep===4) bSlide();
+  foot();
+}
+function bSlide(){
+  const t = T.find(x=>x.id===bSel.tpl);
+  const g = id => +document.getElementById(id).value;
+  ["w","h","d"].forEach(k=>document.getElementById("v_"+k).textContent = g("v_"+k) ? g(k+"") : "");
+  const w=+document.querySelector('.slider-row:nth-child(2) input')?.value||t.w[0];
+  // 简化：直接读三个 range
+  const rs = document.querySelectorAll('input[type=range]');
+  const vals = [...rs].map(r=>+r.value);
+  ["w","h","d"].forEach((k,i)=>document.getElementById("v_"+k).textContent=vals[i]);
+  const ph = 120 * vals[1]/vals[0] * (vals[0]/vals[1]); // 高按比例
+  const px = { w: Math.min(160, vals[0]*0.06), h: Math.min(200, vals[1]*0.075) };
+  document.getElementById("bPrev").innerHTML = `<div style="font-size:12px;color:#999;margin-bottom:6px">实时预览（正立面，随滑杆联动）</div>${svgFront(t,px.w,px.h)}<div style="font-size:12px;color:#666;margin-top:6px">${vals[0]} × ${vals[1]} × ${vals[2]} mm</div>`;
+  state.ins = { id:t.id, w:vals[0], h:vals[1], d:vals[2] };
+}
+function bInsert(){
+  const t = T.find(x=>x.id===state.ins.id);
+  state.ins.info = collectInfo(t);
+  state.mode="placing"; state.cur=state.ins.id;
+  document.getElementById("canvas").classList.add("placing");
+  document.getElementById("cvHint").textContent = "放置模式：在图纸上点击任意位置放置";
+  toast("点击图纸放置");
+}
+
+/* ================= 变体 C 紧凑专业式 ================= */
+let cCat = "", cQ = "", cSel = 0;
+function renderC(){
+  const cats = [...new Set(T.map(t=>t.cat))];
+  const list = T.filter(t=>(!cCat||t.cat===cCat)&&(!cQ||t.name.includes(cQ)||tagsOf(t).join().includes(cQ)));
+  if (cSel>=list.length) cSel=0;
+  document.getElementById("palette").innerHTML = `
+    <div class="p-head"><span class="logo">柜库·Pro<small>${state.user.store}</small></span>
+      <span><span class="badge offline">离线可用 ${state.cache}</span> <a href="javascript:logout()" style="font-size:12px;color:#999;margin-left:6px">注销</a></span></div>
+    <div class="recent">${T.slice(0,4).map(t=>`<span class="chip" style="cursor:default" title="最近使用">${t.name.slice(0,3)}</span>`).join("")}</div>
+    <div style="display:flex;flex:1;min-height:0">
+      <div class="tree" style="width:110px;border-right:1px solid #f0f0f0;overflow-y:auto">
+        <div class="node ${cCat===""?"on":""}" onclick="cCat='';renderP()">全部<span>${T.length}</span></div>
+        ${cats.map(c=>`<div class="node ${cCat===c?"on":""}" onclick="cCat='${c}';renderP()">${c}<span>${T.filter(t=>t.cat===c).length}</span></div>`).join("")}
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+        <div style="padding:8px"><input class="search" placeholder="输入即筛，↑↓选择，回车=默认尺寸插入" value="${cQ}" oninput="cQ=this.value;renderList()" onkeydown="cKey(event)"></div>
+        <div id="cList" style="flex:1;overflow-y:auto"></div>
+      </div>
+    </div>
+    <div class="p-foot"></div>`;
+  renderList(); foot();
+}
+function renderList(){
+  const list = T.filter(t=>(!cCat||t.cat===cCat)&&(!cQ||t.name.includes(cQ)||tagsOf(t).join().includes(cQ)));
+  document.getElementById("cList").innerHTML = list.map((t,i)=>`
+    <div class="row ${i===cSel?"sel":""}" onclick="cSel=${i};renderList()">
+      <span style="width:34px">${svgFront(t,26,30)}</span>
+      <div class="grow"><div class="name">${t.name}</div><div class="sub">${t.door}·${t.doors}·${t.style}·${t.color}</div></div>
+      <div style="font-size:11px;color:#999;text-align:right">宽${t.w[0]}–${t.w[1]}<br>高${t.h[0]}–${t.h[1]}</div>
+      <button class="btn sm" onclick="event.stopPropagation();cDefault(${t.id})">插</button>
+    </div>`).join("") || `<div style="padding:20px;color:#999;font-size:13px;text-align:center">无匹配</div>`;
+}
+function cKey(e){
+  const list = T.filter(t=>(!cCat||t.cat===cCat)&&(!cQ||t.name.includes(cQ)||tagsOf(t).join().includes(cQ)));
+  if (e.key==="ArrowDown"){ cSel=Math.min(cSel+1,list.length-1); renderList(); }
+  if (e.key==="ArrowUp"){ cSel=Math.max(cSel-1,0); renderList(); }
+  if (e.key==="Enter" && list[cSel]) cDefault(list[cSel].id);
+}
+function cDefault(id){
+  const t = T.find(x=>x.id===id);
+  state.ins = { id, w:Math.round((t.w[0]+t.w[1])/2), h:Math.round((t.h[0]+t.h[1])/2), d:Math.round((t.d[0]+t.d[1])/2) };
+  state.mode="placing"; state.cur=id;
+  document.getElementById("canvas").classList.add("placing");
+  document.getElementById("cvHint").textContent = "放置模式：点击图纸放置（回车默认尺寸，选中后可再敲 E 改尺寸——演示略）";
+  toast(`默认尺寸插入：${t.name}`);
+}
+
+/* ================= 画布放置（模拟插入动态块） ================= */
+document.getElementById("canvas").addEventListener("click", e => {
+  if (state.mode!=="placing" || !state.ins) return;
+  const t = T.find(x=>x.id===state.ins.id);
+  const s = 0.05, W=state.ins.w*s, H=state.ins.h*s;
+  const svg = document.getElementById("cvsvg");
+  const at = `translate(${e.clientX-0}, ${e.clientY-0})`; // 画布全屏，直接用 client 坐标
+  const inner = svgFront(t, W, H).replace(/<\/?svg[^>]*>/g,"");
+  const info = state.ins.info || null;
+  svg.insertAdjacentHTML("beforeend",
+    `<g transform="translate(${e.clientX-W/2},${e.clientY-H/2})">${inner}
+     <text class="placed-label" x="2" y="${H+13}">${t.name} ${state.ins.w}×${state.ins.h}×${state.ins.d}${info?" · "+info.hinge.split("-")[0]+"铰/"+info.handle.split(" ")[0]:" · ⚠信息待补"}（动态块）</text></g>`);
+  state.ledger.push({ name:t.name, w:state.ins.w, h:state.ins.h, d:state.ins.d, info, customer:state.docCustomer });
+  state.mode="browse"; state.ins=null;
+  document.getElementById("canvas").classList.remove("placing");
+  document.getElementById("cvHint").textContent = "假 AutoCAD 画布（演示用）。已插入的块可再次选中拉伸（演示略）。";
+  toast(info ? "已插入并记入图纸台账（拆单基础信息）" : "已插入（快速模式）— 台账标记⚠待补，交图前补齐");
+});
+
+/* ================= 变体切换 ================= */
+function renderP(){ ({A:renderA,B:renderB,C:renderC})[state.variant](); }
+function render(){ state.user ? renderP() : renderLogin(); }
+function setVariant(v){
+  state.variant=v;
+  document.getElementById("vlabel").textContent = VF[v];
+  try { history.replaceState(null,"", location.pathname+"?variant="+v); } catch(_){}
+  if (state.user) renderP();
+}
+function cycle(d){
+  const ks=Object.keys(VF), i=ks.indexOf(state.variant);
+  setVariant(ks[(i+d+ks.length)%ks.length]);
+}
+window.addEventListener("keydown", e=>{
+  if (["INPUT","TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key==="ArrowLeft") cycle(-1);
+  if (e.key==="ArrowRight") cycle(1);
+});
+/* 初始 */
+const q0 = new URLSearchParams(location.search).get("variant");
+setVariant(VF[q0]?q0:"A");
+render();
+</script>
+</body>
+</html>
