@@ -2,3 +2,7 @@
 .claude/worktrees/
 __pycache__/
 *.pyc
+
+# Bulky evidence exports (thousands of JPGs) -- kept on disk for human
+# review, never committed; reports/ carries only report.json/report.md
+audit/reports/**/families/
