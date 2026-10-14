@@ -1,0 +1,41 @@
+# 相似性审计工具默认配置（issue #7）。
+#
+# 用法：python -m audit --input <订单目录> --output <报告目录> --config 本文件
+# 不传 --config 时即使用本文件的默认值；任何缺失的键/节都回落到内置默认。
+#
+# 所有阈值均可在此调整，管道内不硬编码任何容差（spec 实现决策）。
+
+# 渲染参数
+[render]
+# 单柜正视图渲染边长（像素）。512 经夹具实证：256 px 会在 DCT 降采样后
+# 抹掉细板材，把 4 分区拓扑混入 3 分区；改小前先跑测试。
+size = 512
+# 占用网格（IoU 布局比对用），(列, 行)。实证参数 4 列 x 10 行。
+grid_cols = 4
+grid_rows = 10
+
+# pHash 粗聚类（issue #4）
+[cluster]
+# 哈希边长（hash_size），实际位数 = (hash_size*2)^2；12 -> 144 bit。
+# 夹具实证：8x8/64bit 无法区分 2300 宽变体与 4 分区拓扑，>=10 才可用。
+hash_size = 12
+# 汉明距离阈值（0-144）。夹具窗口：同族对 <=26，异族对 >=44，取中值 32。
+threshold = 32
+
+# 尺寸分箱容差 + 布局 IoU（issue #5 精分档，L3 口径）
+[grading]
+width_tolerance = 200.0    # 宽度差 <= 此值算同参数档（mm）
+height_tolerance = 100.0   # 高度差（mm）
+depth_tolerance = 100.0    # 深度差（mm；正视图中不可见时跳过比对）
+grid_iou_threshold = 0.85  # 占用网格 IoU 达到此值才算布局相同
+
+# 覆盖率判定阈值（issue #1 判定标准）
+[report]
+pass_threshold = 70.0        # 覆盖率 >= 70% -> 项目成立
+conditional_threshold = 40.0 # 40%~70% -> 条件成立；< 40% -> 不成立
+
+# 转换适配器（--adapter oda 时读取）
+[adapter]
+# ODA File Converter 可执行文件路径；也可用命令行 --oda-path 覆盖。
+# 下载：https://www.opendesign.com/guestfiles/oda_file_converter
+# path = "C:/Program Files/ODA/ODA File Converter 25.12/ODAFileConverter.exe"

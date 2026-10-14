@@ -19,6 +19,9 @@ dev = [
     "pytest>=8",
 ]
 
+[project.scripts]
+audit = "audit_tool.cli:main"
+
 [tool.setuptools.packages.find]
 # Import package is "audit_tool" (not "audit") so the audit/ project directory
 # on sys.path can never shadow the installed package via namespace packages.
