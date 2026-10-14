@@ -7,6 +7,7 @@ missing-binary error, which fails before any external tool is invoked.
 """
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -52,6 +53,35 @@ def test_oda_adapter_reports_missing_binary_clearly(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="ODA File Converter"):
         adapter.to_dxf(source)
+
+
+def test_oda_adapter_passes_distinct_input_and_output_dirs(tmp_path):
+    """ODA hard-requires out != in: same-dir calls pop a modal error dialog
+    ("Output folder must be different than input folder") that blocks the
+    batch on the user's desktop."""
+    from unittest.mock import patch
+
+    exe = tmp_path / "ODAFileConverter.exe"
+    exe.write_bytes(b"fake")
+    source = tmp_path / "order.dwg"
+    source.write_bytes(b"fake")
+    recorded: dict = {}
+
+    def fake_run(argv, **kwargs):
+        recorded["argv"] = list(argv)
+        Path(argv[2]).mkdir(parents=True, exist_ok=True)
+        (Path(argv[2]) / "order.dxf").write_text("0\nSECTION\n", encoding="ascii")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    adapter = OdaFileConverterAdapter(oda_path=exe)
+    with patch("audit_tool.converters.subprocess.run", fake_run):
+        out = adapter.to_dxf(source)
+
+    assert out == source.with_suffix(".dxf")
+    assert len(recorded["argv"]) == 8
+    indir, outdir = Path(recorded["argv"][1]), Path(recorded["argv"][2])
+    assert indir != outdir, "ODA input and output directory args must differ"
+    assert recorded["argv"][7] == "order.dwg"  # filename filter inside indir
 
 
 def test_custom_adapter_can_replace_dxf_direct_in_the_pipeline(tmp_path):

@@ -74,13 +74,20 @@ class OdaFileConverterAdapter(ConversionAdapter):
 
         target = source.with_suffix(".dxf")
         with tempfile.TemporaryDirectory(prefix="audit_oda_") as tmp:
-            staging = Path(tmp) / source.name
+            # ODA hard-requires the output folder to differ from the input
+            # folder (otherwise it pops a modal "Output folder must be
+            # different than input folder" dialog and blocks the batch).
+            indir = Path(tmp) / "in"
+            outdir = Path(tmp) / "out"
+            indir.mkdir()
+            outdir.mkdir()
+            staging = indir / source.name
             shutil.copyfile(source, staging)
             result = subprocess.run(
                 [
                     str(self.oda_path),
-                    str(tmp),
-                    str(tmp),
+                    str(indir),
+                    str(outdir),
                     self.output_version,
                     self.output_type,
                     "0",  # no recursion
@@ -91,7 +98,7 @@ class OdaFileConverterAdapter(ConversionAdapter):
                 text=True,
                 check=False,
             )
-            produced = Path(tmp) / (source.stem + ".dxf")
+            produced = outdir / (source.stem + ".dxf")
             if result.returncode != 0 or not produced.is_file():
                 raise RuntimeError(
                     f"ODA File Converter failed for {source.name} "
