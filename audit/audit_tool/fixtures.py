@@ -167,7 +167,6 @@ def build_base_cabinet(
     carcass_h = height - countertop_thickness
 
     # carcass
-    _rect(doc, LAYER_PANEL, 0, 0, width, carcass_h)
     _rect(doc, LAYER_PANEL, 0, 0, BOARD, carcass_h)
     _rect(doc, LAYER_PANEL, width - BOARD, 0, BOARD, carcass_h)
     _rect(doc, LAYER_PANEL, 0, 0, width, BOARD)
