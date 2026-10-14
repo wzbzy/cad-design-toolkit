@@ -26,27 +26,46 @@ by parameter adjustment alone. Both cases count as uncovered.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from audit_tool.grade import DEFAULT_GRADING_CONFIG, GradingConfig, grade_families
 
 __all__ = [
     "DEFAULT_REPORT_CONFIG",
     "REPORT_SCHEMA",
+    "THUMBNAIL_DIR",
     "ReportConfig",
     "build_report",
     "judge_coverage",
     "render_markdown",
+    "thumbnail_path",
     "write_report",
 ]
 
 REPORT_SCHEMA = "audit-report/1"
+
+THUMBNAIL_DIR = "thumbnails"
 
 VERDICT_CONCLUSIONS = {
     "pass": "成立",
     "conditional": "条件成立",
     "fail": "不成立",
 }
+
+VERDICT_NOTES = {
+    "pass": "覆盖率达标，项目可以立项。",
+    "conditional": "仅对高频家族建库，低频品类维持现状手绘。",
+    "fail": "订单柜体重复性不足，不建议启动图库/插件建设。",
+}
+
+
+def thumbnail_path(family: str, representative: str) -> str:
+    """Relative (report.md-relative) path of one family's thumbnail."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", representative)
+    return f"{THUMBNAIL_DIR}/{family}_{safe}.png"
 
 
 @dataclass(frozen=True)
@@ -155,6 +174,7 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
             "source_directories": sorted(
                 {sources.get(cid, {}).get("directory", "unknown") for cid in member_ids}
             ),
+            "thumbnail": thumbnail_path(key, rep),
         })
 
     covered_set = set(covered_ids)
@@ -219,3 +239,140 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
         "monthly": monthly,
         "families": family_entries,
     }
+
+
+def _fmt_range(rng) -> str:
+    """min-max range as compact markdown cell text."""
+    if rng is None:
+        return "-"
+    lo, hi = rng["min"], rng["max"]
+    return f"{lo:g}" if lo == hi else f"{lo:g} - {hi:g}"
+
+
+def render_markdown(report: dict) -> str:
+    """Render the human-readable ``report.md`` (issue #6 deliverable 4).
+
+    Conclusion first: verdict level, coverage figure and thresholds lead
+    the document; monthly comparison, Top-N curve and the family detail
+    tables (with relative thumbnail links) follow.
+    """
+    v = report["verdict"]
+    cov = report["coverage"]
+    totals = report["totals"]
+    lines: list[str] = []
+    lines.append("# 相似性审计报告")
+    lines.append("")
+    lines.append("## 结论")
+    lines.append("")
+    lines.append(
+        f"**{v['conclusion']}**（判定级别 `{v['level']}`）—— "
+        f"柜体级参数化覆盖率 **{cov['ratio_pct']:.1f}%**"
+        f"（{cov['covered_cabinets']}/{cov['total_cabinets']} 台）。"
+    )
+    lines.append("")
+    lines.append(
+        f"判定阈值：成立 ≥ {v['thresholds']['pass_min_pct']:g}%，"
+        f"条件成立 {v['thresholds']['conditional_min_pct']:g}%–{v['thresholds']['pass_min_pct']:g}%，"
+        f"不成立 < {v['thresholds']['conditional_min_pct']:g}%。{VERDICT_NOTES[v['level']]}"
+    )
+    lines.append("")
+    lines.append(
+        f"共 {totals['cabinets']} 台柜体，聚为 {totals['families']} 个家族、"
+        f"{totals['grades']} 个参数档；覆盖 {totals['covered_cabinets']} 台，"
+        f"未覆盖 {totals['uncovered_cabinets']} 台。"
+    )
+    lines.append("")
+
+    if report["monthly"]:
+        lines.append("## 跨月对比（按来源目录）")
+        lines.append("")
+        lines.append("| 来源目录 | 柜体数 | 覆盖柜体 | 覆盖率 | 家族数 |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for directory, m in report["monthly"].items():
+            lines.append(
+                f"| {directory} | {m['cabinets']} | {m['covered']} | "
+                f"{m['coverage_pct']:.1f}% | {m['families']} |"
+            )
+        lines.append("")
+
+    if report["top_n"]:
+        lines.append("## Top-N 模板覆盖率曲线")
+        lines.append("")
+        lines.append(
+            "家族按柜体数降序累计。维护前 N 个模板（家族）可获得："
+        )
+        lines.append("")
+        lines.append("| Top-N | 累计柜体 | 柜体占比 | 累计覆盖 | 覆盖率 |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for row in report["top_n"]:
+            lines.append(
+                f"| {row['n']} | {row['cabinets']} | {row['cabinets_pct']:.1f}% | "
+                f"{row['covered']} | {row['coverage_pct']:.1f}% |"
+            )
+        lines.append("")
+
+    lines.append("## 家族明细")
+    lines.append("")
+    lines.append("族名为占位，待人工从 GLOSSARY 柜型标签词表取值命名。")
+    lines.append("")
+    lines.append(
+        "| 家族 | 柜型命名 | 成员数 | 代表柜 | 宽 min-max | 高 min-max | 深 min-max "
+        "| 参数档数 | 样本单号 | 来源目录 | 缩略图 |"
+    )
+    lines.append("|---|---|---:|---|---|---|---|---:|---|---|---|")
+    for fam in report["families"]:
+        label = "待人工命名" if fam["label_pending"] else fam["label"]
+        lines.append(
+            f"| {fam['family']} | {label} | {fam['member_count']} | {fam['representative']} "
+            f"| {_fmt_range(fam['width'])} | {_fmt_range(fam['height'])} | {_fmt_range(fam['depth'])} "
+            f"| {len(fam['grades'])} | {', '.join(fam['sample_orders'])} "
+            f"| {', '.join(fam['source_directories'])} "
+            f"| ![{fam['family']}]({fam['thumbnail']}) |"
+        )
+    lines.append("")
+
+    lines.append("### 参数档明细")
+    lines.append("")
+    for fam in report["families"]:
+        lines.append(f"- **{fam['family']}**（代表柜 {fam['representative']}）:")
+        for g in fam["grades"]:
+            mark = "覆盖" if g["covered"] else "未覆盖"
+            lines.append(
+                f"  - `{g['grade']}`（{g['member_count']} 台，{mark}）: "
+                f"{', '.join(g['members'])}"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_report(report: dict, out_dir, fronts: dict | None = None) -> dict:
+    """Write ``report.json`` + ``report.md`` into ``out_dir``.
+
+    When ``fronts`` (cabinet id -> :class:`audit_tool.extract.CabinetFront`)
+    is given, each family's representative is rendered to
+    ``thumbnails/`` so the Markdown links resolve. Returns the artifact
+    paths.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    json_path = out / "report.json"
+    json_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    md_path = out / "report.md"
+    md_path.write_text(render_markdown(report), encoding="utf-8")
+
+    thumbnails = []
+    if fronts:
+        from audit_tool.cluster import RENDER_SIZE
+        from audit_tool.render import render_cabinet
+
+        (out / THUMBNAIL_DIR).mkdir(exist_ok=True)
+        for fam in report["families"]:
+            front = fronts[fam["representative"]]
+            path = out / fam["thumbnail"]
+            render_cabinet(front, size=RENDER_SIZE).save(path)
+            thumbnails.append(str(path))
+
+    return {"json": str(json_path), "md": str(md_path), "thumbnails": thumbnails}

@@ -20,7 +20,12 @@ from audit_tool import fixtures
 from audit_tool.cluster import cluster_hashes, phash_cabinet
 from audit_tool.extract import extract_cabinets
 from audit_tool.grade import extract_features
-from audit_tool.report import DEFAULT_REPORT_CONFIG, ReportConfig, build_report
+from audit_tool.report import (
+    DEFAULT_REPORT_CONFIG,
+    ReportConfig,
+    build_report,
+    write_report,
+)
 
 
 def make_drawing(tmp_path, directory, order_no, scenario=None, builder=None):
@@ -260,3 +265,140 @@ def test_monthly_grouping_by_source_directory(tmp_path):
     assert monthly["2026-03"]["covered"] == 1
     assert monthly["2026-03"]["coverage_pct"] == 50.0
     assert report["coverage"]["ratio_pct"] == 75.0
+
+
+# -- report.json structure: stable and serializable --
+
+@pytest.fixture(scope="module")
+def full_report(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("full")
+    # covered wardrobe family of 3 (widths 2000-2150, spread inside the bin)
+    # plus one base-cabinet outlier -> 3/4 = 75%, verdict 成立.
+    make_drawing(tmp_path, "2026-01", "SD2601-000", "wardrobe_2000_baseline")
+    make_drawing(tmp_path, "2026-01", "SD2601-001", "wardrobe_2000_baseline")
+    make_drawing(tmp_path, "2026-01", "SD2601-002", "wardrobe_2150_tol_within")
+    make_drawing(tmp_path, "2026-01", "SD2601-003", "base_cabinet_800")
+    cluster, features, sources = audit_directory(tmp_path, "2026-01")
+    return build_report(cluster, features, sources)
+
+
+def test_report_json_round_trips_exactly(full_report):
+    encoded = json.dumps(full_report, ensure_ascii=False, indent=2)
+    assert json.loads(encoded) == full_report
+
+
+def test_report_json_has_all_ticket_fields(full_report):
+    # issue #6 deliverable 3: family list with pending label + representative
+    # + member count, per-family size min-max, grade detail, sample orders /
+    # source directories, Top-N curve, coverage, verdict.
+    assert full_report["schema"] == "audit-report/1"
+    for section in ("totals", "coverage", "verdict", "top_n", "monthly", "families"):
+        assert section in full_report
+
+    wardrobe = next(f for f in full_report["families"] if f["member_count"] == 3)
+    assert wardrobe["label"] is None
+    assert wardrobe["label_pending"] is True
+    assert wardrobe["representative"].startswith("SD2601-")
+    assert wardrobe["width"] == {"min": 2000.0, "max": 2150.0}
+    assert wardrobe["height"] == {"min": 2400.0, "max": 2400.0}
+    assert wardrobe["grades"] and wardrobe["grades"][0]["grade"].startswith(wardrobe["family"])
+    assert "SD2601-000" in wardrobe["sample_orders"]
+    assert wardrobe["source_directories"] == ["2026-01"]
+
+
+def test_report_sources_fallback_without_source_map(tmp_path):
+    # build_report stays usable when the caller passes no source map.
+    make_drawing(tmp_path, "jan", "A", "wardrobe_2000_baseline")
+    make_drawing(tmp_path, "jan", "B", "wardrobe_2150_tol_within")
+    cluster, features, _ = audit_directory(tmp_path, "jan")
+
+    report = build_report(cluster, features)
+
+    fam = report["families"][0]
+    # fallback: the cabinet id stands in for the missing order number
+    assert fam["sample_orders"] == ["A#0", "B#0"]
+    assert fam["source_directories"] == ["unknown"]
+    assert report["monthly"]["unknown"]["cabinets"] == 2
+
+
+def test_empty_input_yells_fail_with_zero_coverage():
+    report = build_report({"families": []}, {})
+
+    assert report["totals"]["cabinets"] == 0
+    assert report["coverage"]["ratio_pct"] == 0.0
+    assert report["verdict"]["level"] == "fail"
+    assert report["top_n"] == []
+    assert report["monthly"] == {}
+
+
+# -- report.md: verdict first, then family details --
+
+def test_markdown_conclusion_first(full_report):
+    from audit_tool.report import render_markdown
+
+    md = render_markdown(full_report)
+
+    lines = md.strip().splitlines()
+    assert lines[0].startswith("#")
+    verdict_idx = next(i for i, ln in enumerate(lines) if "条件成立" in ln or "成立" in ln)
+    coverage_idx = next(i for i, ln in enumerate(lines) if "75.0" in ln or "75%" in ln)
+    family_idx = next(i for i, ln in enumerate(lines) if "f0" in ln and "|" in ln)
+    assert verdict_idx < len(lines) // 2
+    assert coverage_idx < family_idx
+    assert family_idx < len(lines)
+
+
+def test_markdown_contains_family_details_and_thumbnail_links(full_report):
+    from audit_tool.report import render_markdown
+
+    md = render_markdown(full_report)
+
+    # family table with pending-label placeholder, min-max sizes, samples
+    assert "待人工命名" in md
+    assert "2000" in md and "2150" in md
+    assert "SD2601-000" in md
+    # per-family thumbnail as a relative link into the thumbnails directory
+    assert "thumbnails/" in md
+    assert "](thumbnails/" in md
+
+
+# -- write_report: artifacts on disk --
+
+def test_write_report_writes_json_md_and_thumbnails(tmp_path):
+    make_drawing(tmp_path, "jan", "SD2601-000", "wardrobe_2000_baseline")
+    make_drawing(tmp_path, "jan", "SD2601-001", "wardrobe_2150_tol_within")
+    make_drawing(tmp_path, "jan", "SD2601-002", "base_cabinet_800")
+    cluster, features, sources = audit_directory(tmp_path, "jan")
+    report = build_report(cluster, features, sources)
+
+    # fronts by cabinet id, as the pipeline would hand them over
+    fronts = {}
+    for path in sorted((tmp_path / "jan").glob("*.dxf")):
+        for cabinet in extract_cabinets(path):
+            fronts[f"{path.stem}#{cabinet.index}"] = cabinet
+
+    out = tmp_path / "out"
+    paths = write_report(report, out, fronts=fronts)
+
+    # json round-trips and carries the full structure
+    loaded = json.loads(out.joinpath("report.json").read_text(encoding="utf-8"))
+    assert loaded == report
+    assert out.joinpath("report.md").read_text(encoding="utf-8").startswith("#")
+
+    # every family's representative rendered as a PNG at the linked path
+    assert len(paths["thumbnails"]) == len(report["families"])
+    for fam in report["families"]:
+        png = out / fam["thumbnail"]
+        assert png.exists() and png.stat().st_size > 0
+        assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert f"]({fam['thumbnail']})" in out.joinpath("report.md").read_text(encoding="utf-8")
+
+
+def test_write_report_without_fronts_skips_thumbnails(tmp_path):
+    report = build_report({"families": []}, {})
+
+    paths = write_report(report, tmp_path / "out")
+
+    assert paths["thumbnails"] == []
+    assert (tmp_path / "out" / "report.json").exists()
+    assert (tmp_path / "out" / "report.md").exists()
