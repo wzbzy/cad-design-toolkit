@@ -49,7 +49,7 @@ def test_python_m_audit_help_is_self_explanatory():
         text=True,
     )
     assert result.returncode == 0
-    for flag in ("--input", "--output", "--config", "--adapter"):
+    for flag in ("--input", "--output", "--config", "--adapter", "--no-export-images"):
         assert flag in result.stdout
     assert "oda" in result.stdout.lower()  # adapter choices documented
 
@@ -95,6 +95,69 @@ def test_similar_wardrobes_end_to_end_full_coverage(tmp_path, capsys):
     assert list(grades) == ["f0"]
     # per-cabinet renders: one png per cabinet
     assert len(list((out / "renders").glob("*.png"))) == 5
+
+    # families image export is on by default (issue #9): one jpg per cabinet,
+    # all covered -> families/f0/g0/
+    grade_dir = out / "families" / "f0" / "g0"
+    assert sorted(p.name for p in grade_dir.glob("*.jpg")) == [
+        "SD2601-000_0.jpg",
+        "SD2601-001_0.jpg",
+        "SD2601-002_0.jpg",
+        "SD2601-100_0.jpg",
+        "SD2601-101_0.jpg",
+    ]
+    # cabinet ids keep the order stem -> traceable back to the drawing
+    from PIL import Image
+    with Image.open(grade_dir / "SD2601-000_0.jpg") as im:
+        im.verify()
+
+
+# -- families image export (issue #9): ungraded + failed archiving --
+
+def test_image_export_archives_ungraded_and_failed(tmp_path):
+    jan = tmp_path / "in" / "jan"
+    make_drawing(jan, "SD2601-000", "wardrobe_2000_baseline")
+    make_drawing(jan, "SD2601-001", "wardrobe_2000_baseline")
+    make_drawing(jan, "SD2603-000", "base_cabinet_800")  # own family, singleton grade
+    (jan / "broken_order.dwg").write_bytes(b"not a real dwg")
+    out = tmp_path / "out"
+
+    rc = run_cli("--input", str(jan), "--output", str(out))
+
+    assert rc == 0
+    report = read_json(out / "report.json")
+    assert report["totals"]["cabinets"] == 3
+    families = out / "families"
+    # covered pair lands in its family/grade directory
+    assert len(list((families / "f0" / "g0").glob("*.jpg"))) == 2
+    # the singleton base cabinet has no reproducible grade -> _未归类
+    assert sorted(p.name for p in (families / "_未归类").glob("*.jpg")) == [
+        "SD2603-000_0.jpg"
+    ]
+    # every cabinet exported exactly once, plus the failed drawing note
+    assert len(list(families.rglob("*.jpg"))) == 3
+    note = families / "_失败" / "broken_order.dwg.txt"
+    assert note.is_file()
+    assert "broken_order.dwg" in note.read_text(encoding="utf-8")
+    # report.md documents the layout and how to spot-check it
+    md = (out / "report.md").read_text(encoding="utf-8")
+    assert "图片目录结构与抽查方法" in md
+    assert "_未归类" in md
+    assert "_失败" in md
+
+
+def test_no_export_images_flag_skips_the_families_tree(tmp_path):
+    jan = tmp_path / "in" / "jan"
+    make_drawing(jan, "SD2601-000", "wardrobe_2000_baseline")
+    make_drawing(jan, "SD2601-001", "wardrobe_2000_baseline")
+    out = tmp_path / "out"
+
+    rc = run_cli("--input", str(jan), "--output", str(out), "--no-export-images")
+
+    assert rc == 0
+    assert not (out / "families").exists()
+    # the report itself is still complete
+    assert read_json(out / "report.json")["totals"]["cabinets"] == 2
 
 
 # -- multi-month input + outliers -> exact coverage / 条件成立 / 跨月 --

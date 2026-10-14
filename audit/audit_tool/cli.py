@@ -32,7 +32,7 @@ import json
 import re
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from audit_tool.cluster import (
@@ -45,6 +45,7 @@ from audit_tool.cluster import (
 from audit_tool.converters import ConversionAdapter, DxfDirectAdapter, OdaFileConverterAdapter
 from audit_tool.extract import CabinetFront, extract_cabinets
 from audit_tool.grade import DEFAULT_GRADING_CONFIG, GradingConfig, extract_features
+from audit_tool.images import export_family_images
 from audit_tool.render import DEFAULT_GRID_SHAPE, render_cabinet
 from audit_tool.report import DEFAULT_REPORT_CONFIG, ReportConfig, build_report, write_report
 
@@ -72,6 +73,7 @@ class Settings:
     cluster_threshold: int = DEFAULT_THRESHOLD
     grading: GradingConfig = DEFAULT_GRADING_CONFIG
     report: ReportConfig = DEFAULT_REPORT_CONFIG
+    export_images: bool = True  # families/ JPG tree (issue #9); --no-export-images / [report] export_images
     oda_path: str | None = None
 
 
@@ -117,6 +119,7 @@ def load_settings(config_path: str | None) -> Settings:
             ),
             grading=grading,
         ),
+        export_images=bool(report_section.get("export_images", True)),
         oda_path=data.get("adapter", {}).get("path"),
     )
 
@@ -184,6 +187,8 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
     - ``intermediate/features.json`` cabinet id -> feature vector
     - ``intermediate/grades.json``   family -> parametric grades
     - ``intermediate/processing.json`` per-file processing record
+    - ``families/``                  browsable per-cabinet JPGs grouped by
+      family/parametric grade (issue #9; ``--no-export-images`` skips it)
     """
     out = Path(out_dir)
     renders_dir = out / "renders"
@@ -231,11 +236,12 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
             f"({files_seen} file(s), {len(failed)} failed); nothing to audit"
         )
 
-    hashes = {
-        cid: phash_image(render_cabinet(c, size=settings.render_size),
-                         hash_size=settings.hash_size)
-        for cid, c in fronts.items()
-    }
+    hashes: dict[str, object] = {}
+    images: dict[str, object] = {}
+    for cid, cabinet in fronts.items():
+        img = render_cabinet(cabinet, size=settings.render_size)
+        images[cid] = img
+        hashes[cid] = phash_image(img, hash_size=settings.hash_size)
     cluster = cluster_hashes(hashes, threshold=settings.cluster_threshold)
     features = {cid: extract_features(cid, c, grid_shape=settings.grid_shape)
                 for cid, c in fronts.items()}
@@ -270,6 +276,11 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
 
     write_report(report, out, fronts)
 
+    if settings.export_images:
+        exported = export_family_images(report, out, images=images, failed=failed)
+        log(f"families images written to {exported['dir']} "
+            f"({len(exported['jpgs'])} jpg, {len(exported['failed'])} failed note(s))")
+
     v = report["verdict"]
     log(
         f"{report['totals']['cabinets']} cabinets -> {report['totals']['families']} families, "
@@ -285,7 +296,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description=(
             "相似性审计：把一个或多月订单图纸目录跑完整条审计管道"
             "（转换 -> 提取渲染 -> pHash 粗聚类 -> 特征精分档 -> 报告），"
-            "输出 report.json / report.md、家族缩略图与全部中间产物。"
+            "输出 report.json / report.md、家族缩略图、按族/参数档归档的"
+            "柜体 JPG 图片目录与全部中间产物。"
         ),
         epilog=(
             "示例：python -m audit --input 订单/2026-01 --input 订单/2026-03 "
@@ -317,6 +329,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="ODA File Converter 可执行文件路径（--adapter oda 时必填，"
              "或写在配置文件 [adapter] path）",
     )
+    parser.add_argument(
+        "--no-export-images", action="store_true",
+        help="不导出 families/ 分类图片目录（柜体 JPG 按族/参数档归档，默认导出）",
+    )
     return parser
 
 
@@ -332,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     if config_path is None and DEFAULT_CONFIG_PATH.is_file():
         config_path = str(DEFAULT_CONFIG_PATH)
     settings = load_settings(config_path)
+    if args.no_export_images:
+        settings = replace(settings, export_images=False)
 
     if args.adapter == "oda":
         oda_path = args.oda_path or settings.oda_path
