@@ -349,23 +349,26 @@ def render_markdown(report: dict) -> str:
     lines.append("## 图片目录结构与抽查方法")
     lines.append("")
     lines.append(
-        f"每台柜体导出一张 JPG（质量 {IMAGE_QUALITY}），按"
-        f" `{FAMILIES_DIR}/<族ID>/<参数档ID>/<柜ID>.jpg` 归档，"
+        f"每台柜体导出同名一对文件：JPG 渲染图（质量 {IMAGE_QUALITY}）+ "
+        "DXF 几何图，按"
+        f" `{FAMILIES_DIR}/<族ID>/<参数档ID>/<柜ID>.jpg|.dxf` 归档，"
         "可直接用资源管理器浏览验证聚类与分档："
     )
     lines.append("")
     lines.append(
-        f"- 柜ID 文件名为 `<单号>_<柜序号>.jpg`，含来源单号/stem，可回溯到订单图纸；"
+        f"- 柜ID 文件名为 `<单号>_<柜序号>.jpg|.dxf`，含来源单号/stem，可回溯到订单图纸；"
         f"- 未归入任何可复现参数档（单件档或超容差档）的柜体在 "
         f"`{FAMILIES_DIR}/{UNGRADED_DIR}/`；"
         f"- 转换/提取失败的图纸在 `{FAMILIES_DIR}/{FAILED_DIR}/<文件名>.txt`，"
-        "内容为失败原因（目录、文件名、错误信息）。"
+        "内容为失败原因（目录、文件名、错误信息）；图纸已成功转换为 DXF 的，"
+        "DXF 副本一并放在此处供检查。"
     )
     lines.append("")
     lines.append(
-        "抽查方法：任选一个参数档目录，肉眼比对该档内柜体图片是否确实同构且同尺寸档；"
+        "抽查方法：任选一个参数档目录，肉眼比对该档内柜体 JPG 是否确实同构且同尺寸档，"
+        "需要核对几何时用 CAD 打开同名 DXF；"
         f"再翻 `{UNGRADED_DIR}/` 确认未覆盖判定合理、`{FAILED_DIR}/` 确认失败原因可接受。"
-        "跑批默认导出图片，`--no-export-images` 可关闭。"
+        "跑批默认导出图片，`--no-export-images` 可关闭（JPG 与 DXF 一起关）。"
     )
     lines.append("")
     return "\n".join(lines)

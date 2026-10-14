@@ -56,7 +56,7 @@ python -m audit --input D:\订单\2026-01 --output D:\审计结果 --config audi
 | `--config FILE` | TOML 配置文件，默认 `audit/config.example.toml`（带注释，所有键可省略） |
 | `--adapter {dxf,oda}` | 转换适配器，默认 `oda`；`dxf` 为 DXF 直读（无 ODA 环境与测试） |
 | `--oda-path EXE` | ODA File Converter 路径（`--adapter oda` 时必填，或写在配置 `[adapter] path`） |
-| `--no-export-images` | 不导出 `families/` 分类图片目录（默认导出，见下） |
+| `--no-export-images` | 不导出 `families/` 分类图片目录（默认导出 JPG+DXF，见下；此开关同时关两者） |
 
 ### 输出目录结构（证据可追溯）
 
@@ -66,9 +66,9 @@ out/
 ├── report.md                    # 人读报告（结论置顶，含缩略图链接与图片抽查说明）
 ├── thumbnails/                  # 每个家族代表柜缩略图
 ├── families/                    # 分类图片（issue #9，可直接人眼浏览验证）
-│   ├── <族ID>/<参数档ID>/<柜ID>.jpg
-│   ├── _未归类/<柜ID>.jpg       # 未归入任何可复现参数档的柜体
-│   └── _失败/<文件名>.txt       # 转换/提取失败的图纸及原因
+│   ├── <族ID>/<参数档ID>/<柜ID>.jpg + <柜ID>.dxf
+│   ├── _未归类/<柜ID>.jpg|.dxf  # 未归入任何可复现参数档的柜体
+│   └── _失败/<文件名>.txt       # 转换/提取失败的图纸及原因（已转换出 DXF 的附副本）
 ├── renders/                     # 每台单元柜的渲染图（中间产物）
 └── intermediate/
     ├── hashes.json              # 柜 -> pHash（中间产物）
@@ -78,9 +78,11 @@ out/
     └── processing.json          # 每个图纸文件的处理记录（含失败原因）
 ```
 
-`families/` 里每台柜体一张 JPG（质量 85），文件名为 `<单号>_<柜序号>.jpg`
-（柜ID 含来源单号/stem，可回溯到订单图纸）。抽查方法：任选一个参数档目录，
-肉眼比对该档内柜体是否确实同构同尺寸档；再翻 `_未归类/` 确认未覆盖判定合理、
+`families/` 里每台柜体一对同名文件：JPG 渲染图（质量 85）+ DXF 几何图，
+文件名为 `<单号>_<柜序号>.jpg|.dxf`（柜ID 含来源单号/stem，可回溯到订单图纸；
+DXF 为该柜提取图元的独立文件，仅含普通二维几何，不含块引用）。
+抽查方法：任选一个参数档目录，肉眼比对该档内柜体 JPG 是否确实同构同尺寸档，
+需核对几何时用 CAD 打开同名 DXF；再翻 `_未归类/` 确认未覆盖判定合理、
 `_失败/` 确认失败原因可接受（`report.md` 末尾也附有此说明）。
 
 ## 配置（audit/config.example.toml）
@@ -92,7 +94,7 @@ out/
 | `[grading]` | `width_tolerance` / `height_tolerance` / `depth_tolerance` | 200 / 100 / 100 | L3 尺寸分箱容差（mm） |
 | `[grading]` | `grid_iou_threshold` | 0.85 | 布局占用网格 IoU 阈值 |
 | `[report]` | `pass_threshold` / `conditional_threshold` | 70 / 40 | 覆盖率判定阈值（%） |
-| `[report]` | `export_images` | true | 是否导出 `families/` 分类图片目录（issue #9） |
+| `[report]` | `export_images` | true | 是否导出 `families/` 分类图片目录（JPG+DXF，issue #9） |
 | `[adapter]` | `path` | （无） | ODA File Converter 路径 |
 
 ## 判定标准

@@ -33,9 +33,10 @@ grid_iou_threshold = 0.85  # 占用网格 IoU 达到此值才算布局相同
 [report]
 pass_threshold = 70.0        # 覆盖率 >= 70% -> 项目成立
 conditional_threshold = 40.0 # 40%~70% -> 条件成立；< 40% -> 不成立
-# 分类图片导出（issue #9）：跑批后把每台柜体的 JPG 按 族/参数档 归档到
-# families/<族ID>/<档ID>/，未覆盖柜体进 families/_未归类/，失败图纸进
-# families/_失败/。默认开启；命令行 --no-export-images 可临时关闭。
+# 分类图片导出（issue #9）：跑批后把每台柜体的 JPG+同名 DXF 按 族/参数档
+# 归档到 families/<族ID>/<档ID>/，未覆盖柜体进 families/_未归类/，失败图纸
+# 进 families/_失败/。默认开启；命令行 --no-export-images 可临时关闭
+# （JPG 与 DXF 一起关）。
 export_images = true
 
 # 转换适配器（--adapter oda 时读取）

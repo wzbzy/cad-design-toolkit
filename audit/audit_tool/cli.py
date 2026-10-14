@@ -187,8 +187,9 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
     - ``intermediate/features.json`` cabinet id -> feature vector
     - ``intermediate/grades.json``   family -> parametric grades
     - ``intermediate/processing.json`` per-file processing record
-    - ``families/``                  browsable per-cabinet JPGs grouped by
-      family/parametric grade (issue #9; ``--no-export-images`` skips it)
+    - ``families/``                  browsable per-cabinet JPG + same-named
+      DXF pairs grouped by family/parametric grade (issue #9;
+      ``--no-export-images`` skips it)
     """
     out = Path(out_dir)
     renders_dir = out / "renders"
@@ -204,11 +205,17 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
     files_seen = 0
     for directory_label, path in pairs:
         files_seen += 1
+        dxf = None
         try:
             dxf = adapter.to_dxf(path)
             cabinets = extract_cabinets(dxf)
         except Exception as exc:  # noqa: BLE001 - one bad sheet must not kill a batch
-            failed.append({"file": path.name, "directory": directory_label, "error": str(exc)})
+            record = {"file": path.name, "directory": directory_label, "error": str(exc)}
+            if dxf is not None:
+                # the sheet converted; keep the dxf path so the families
+                # export can copy it next to the failure note (issue #9)
+                record["dxf"] = str(dxf)
+            failed.append(record)
             log(f"FAILED  {directory_label}/{path.name}: {exc}")
             continue
         for cabinet in cabinets:
@@ -277,9 +284,10 @@ def run_pipeline(inputs: list[str], out_dir, adapter: ConversionAdapter,
     write_report(report, out, fronts)
 
     if settings.export_images:
-        exported = export_family_images(report, out, images=images, failed=failed)
+        exported = export_family_images(report, out, images=images, fronts=fronts,
+                                        failed=failed)
         log(f"families images written to {exported['dir']} "
-            f"({len(exported['jpgs'])} jpg, {len(exported['failed'])} failed note(s))")
+            f"({len(exported['jpgs'])} jpg + dxf, {len(exported['failed'])} failed note(s))")
 
     v = report["verdict"]
     log(

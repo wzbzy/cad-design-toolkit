@@ -96,8 +96,8 @@ def test_similar_wardrobes_end_to_end_full_coverage(tmp_path, capsys):
     # per-cabinet renders: one png per cabinet
     assert len(list((out / "renders").glob("*.png"))) == 5
 
-    # families image export is on by default (issue #9): one jpg per cabinet,
-    # all covered -> families/f0/g0/
+    # families image export is on by default (issue #9): one jpg + dxf pair
+    # per cabinet, all covered -> families/f0/g0/
     grade_dir = out / "families" / "f0" / "g0"
     assert sorted(p.name for p in grade_dir.glob("*.jpg")) == [
         "SD2601-000_0.jpg",
@@ -105,6 +105,14 @@ def test_similar_wardrobes_end_to_end_full_coverage(tmp_path, capsys):
         "SD2601-002_0.jpg",
         "SD2601-100_0.jpg",
         "SD2601-101_0.jpg",
+    ]
+    # same-named dxf geometry next to every jpg
+    assert sorted(p.name for p in grade_dir.glob("*.dxf")) == [
+        "SD2601-000_0.dxf",
+        "SD2601-001_0.dxf",
+        "SD2601-002_0.dxf",
+        "SD2601-100_0.dxf",
+        "SD2601-101_0.dxf",
     ]
     # cabinet ids keep the order stem -> traceable back to the drawing
     from PIL import Image
@@ -134,11 +142,15 @@ def test_image_export_archives_ungraded_and_failed(tmp_path):
     assert sorted(p.name for p in (families / "_未归类").glob("*.jpg")) == [
         "SD2603-000_0.jpg"
     ]
-    # every cabinet exported exactly once, plus the failed drawing note
+    assert (families / "_未归类" / "SD2603-000_0.dxf").is_file()
+    # every cabinet exported exactly once (jpg + dxf), plus the failed note
     assert len(list(families.rglob("*.jpg"))) == 3
+    assert len(list(families.rglob("*.dxf"))) == 3
     note = families / "_失败" / "broken_order.dwg.txt"
     assert note.is_file()
     assert "broken_order.dwg" in note.read_text(encoding="utf-8")
+    # the dwg never converted, so there is no dxf to inspect for it
+    assert not (families / "_失败" / "broken_order.dwg.dxf").exists()
     # report.md documents the layout and how to spot-check it
     md = (out / "report.md").read_text(encoding="utf-8")
     assert "图片目录结构与抽查方法" in md
