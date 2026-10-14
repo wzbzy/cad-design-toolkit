@@ -145,20 +145,17 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
         member_ids = list(fam["members"])
         members = [features[cid] for cid in member_ids]
         fam_grades = []
-        fam_covered = 0
         for g in grades[key]["grades"]:
             g_members = [features[cid] for cid in g["members"]]
             is_covered = len(g_members) >= 2 and _grade_spread_within_tolerance(g_members, config)
             if is_covered:
                 covered_ids.extend(g["members"])
-                fam_covered += len(g["members"])
             fam_grades.append({**g, "member_count": len(g["members"]), "covered": is_covered})
 
         widths = [f.width for f in members]
         heights = [f.height for f in members]
         depths = [f.depth for f in members if f.depth is not None]
         rep = fam["representative"]
-        src = sources.get(rep, {})
         family_entries.append({
             "family": key,
             "label": None,  # 族名占位: 人工从 GLOSSARY 柜型词表命名
