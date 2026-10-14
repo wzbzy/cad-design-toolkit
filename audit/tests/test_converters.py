@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from audit_tool.converters import ConversionAdapter, DxfDirectAdapter
+from audit_tool.converters import (
+    ConversionAdapter,
+    DxfDirectAdapter,
+    OdaFileConverterAdapter,
+)
 
 
 def test_dxf_direct_adapter_is_a_conversion_adapter():
@@ -32,3 +36,17 @@ def test_dxf_direct_adapter_rejects_non_dxf_without_touching_file(tmp_path):
 
     with pytest.raises(ValueError, match="only reads DXF"):
         DxfDirectAdapter().to_dxf(missing)
+
+
+def test_oda_adapter_is_a_conversion_adapter():
+    adapter = OdaFileConverterAdapter(oda_path=Path("C:/no/such/ODAFileConverter.exe"))
+    assert isinstance(adapter, ConversionAdapter)
+
+
+def test_oda_adapter_reports_missing_binary_clearly(tmp_path):
+    adapter = OdaFileConverterAdapter(oda_path=tmp_path / "ODAFileConverter.exe")
+    source = tmp_path / "order.dwg"
+    source.write_bytes(b"fake")  # plain bytes; never a real DWG, never opened by ODA
+
+    with pytest.raises(FileNotFoundError, match="ODA File Converter"):
+        adapter.to_dxf(source)
