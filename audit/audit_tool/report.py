@@ -126,11 +126,13 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
         member_ids = list(fam["members"])
         members = [features[cid] for cid in member_ids]
         fam_grades = []
+        fam_covered = 0
         for g in grades[key]["grades"]:
             g_members = [features[cid] for cid in g["members"]]
             is_covered = len(g_members) >= 2 and _grade_spread_within_tolerance(g_members, config)
             if is_covered:
                 covered_ids.extend(g["members"])
+                fam_covered += len(g["members"])
             fam_grades.append({**g, "member_count": len(g["members"]), "covered": is_covered})
 
         widths = [f.width for f in members]
@@ -160,6 +162,42 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
     covered = len(covered_set)
     ratio_pct = round(covered / total * 100, 2) if total else 0.0
 
+    # Top-N curve: families by member count (desc, input order breaks ties),
+    # cumulative cabinet share and coverage as N grows (issue #6).
+    top_n = []
+    cum_ids: list[str] = []
+    cum_cabinets = 0
+    cum_covered = 0
+    ordered = sorted(enumerate(family_entries), key=lambda t: (-t[1]["member_count"], t[0]))
+    for n, (_, fam) in enumerate(ordered, 1):
+        cum_ids.append(fam["family"])
+        cum_cabinets += fam["member_count"]
+        cum_covered += sum(len(g["members"]) for g in fam["grades"] if g["covered"])
+        top_n.append({
+            "n": n,
+            "families": n,
+            "family_ids": list(cum_ids),
+            "cabinets": cum_cabinets,
+            "cabinets_pct": round(cum_cabinets / total * 100, 2) if total else 0.0,
+            "covered": cum_covered,
+            "coverage_pct": round(cum_covered / total * 100, 2) if total else 0.0,
+        })
+
+    # Cross-month comparison: group cabinets by source directory (跨月).
+    by_directory: dict[str, list[str]] = {}
+    for cid in features:
+        by_directory.setdefault(sources.get(cid, {}).get("directory", "unknown"), []).append(cid)
+    monthly = {}
+    for directory in sorted(by_directory):
+        ids = by_directory[directory]
+        dir_covered = sum(1 for cid in ids if cid in covered_set)
+        monthly[directory] = {
+            "cabinets": len(ids),
+            "covered": dir_covered,
+            "coverage_pct": round(dir_covered / len(ids) * 100, 2) if ids else 0.0,
+            "families": sum(1 for f in family_entries if set(f["members"]) & set(ids)),
+        }
+
     return {
         "schema": REPORT_SCHEMA,
         "totals": {
@@ -177,5 +215,7 @@ def build_report(cluster: dict, features: dict, sources: dict | None = None,
             "uncovered_cabinet_ids": sorted(set(features) - covered_set),
         },
         "verdict": judge_coverage(ratio_pct, config),
+        "top_n": top_n,
+        "monthly": monthly,
         "families": family_entries,
     }
